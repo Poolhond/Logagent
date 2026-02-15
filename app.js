@@ -83,6 +83,8 @@ function loadState(){
     if (!s.status) s.status = "draft";
     if (!s.lines) s.lines = [];
     if (!s.logIds) s.logIds = [];
+    if (!s.invoiceStatus) s.invoiceStatus = "open";
+    if (!s.cashStatus) s.cashStatus = "open";
   }
   // log fields
   for (const l of st.logs){
@@ -193,9 +195,8 @@ function settlementForLog(logId){
 function getWorkLogStatus(logId){
   const af = settlementForLog(logId);
   if (!af) return "free";
-  if (af.status === "paid") return "paid";
-  if (af.status === "calculated") return "calculated";
-  return "linked";
+  if (af.invoiceStatus === "paid" && af.cashStatus === "paid") return "paid";
+  return "calculated";
 }
 function statusLabelNL(s){
   if (s === "draft") return "draft";
@@ -510,17 +511,24 @@ function renderProducts(){
 function renderSettlements(){
   const el = $("#tab-settlements");
   const list = [...state.settlements].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(s=>{
-    const cls = statusClassFromStatus(s.status);
+    const rowStatus = (s.invoiceStatus === "paid" && s.cashStatus === "paid") ? "paid" : "calculated";
+    const cls = statusClassFromStatus(rowStatus);
     const totInv = bucketTotals(s.lines, "invoice");
     const totCash = bucketTotals(s.lines, "cash");
     const grand = round2(totInv.total + totCash.subtotal);
+    const invoicePillClass = s.invoiceStatus === "paid" ? "pill-paid" : "pill-open";
+    const cashPillClass = s.cashStatus === "paid" ? "pill-paid" : "pill-open";
     return `
-      <div class="item ${cls}" data-open-settlement="${s.id}">
+      <div class="item item-compact ${cls}" data-open-settlement="${s.id}">
         <div class="item-main">
           <div class="item-title">${esc(cname(s.customerId))}</div>
-          <div class="item-sub mono">${esc(s.date || "")} • ${statusLabelNL(s.status)} • logs ${(s.logIds||[]).length} • totaal ${fmtMoney(grand)}</div>
+          <div class="item-sub mono">${esc(s.date || "")} • #${esc((s.id||"").slice(0,8))} • logs ${(s.logIds||[]).length}</div>
         </div>
-        <div class="item-right"><span class="badge">open</span></div>
+        <div class="item-right settlement-badges">
+          <div class="pill ${invoicePillClass} mono"><span>Factuur</span><strong>${fmtMoney(totInv.total)}</strong></div>
+          <div class="pill ${cashPillClass} mono"><span>Cash</span><strong>${fmtMoney(totCash.subtotal)}</strong></div>
+          <div class="badge mono">${fmtMoney(grand)}</div>
+        </div>
       </div>
     `;
   }).join("");
@@ -546,7 +554,9 @@ function renderSettlements(){
       createdAt: now(),
       logIds: [],
       lines: [],
-      status: "draft"
+      status: "draft",
+      invoiceStatus: "open",
+      cashStatus: "open"
     };
     state.settlements.unshift(s);
     saveState();
@@ -930,7 +940,9 @@ function renderLogSheet(id){
         createdAt: now(),
         logIds: [log.id],
         lines: [],
-        status: "draft"
+        status: "draft",
+        invoiceStatus: "open",
+        cashStatus: "open"
       };
       // compute default lines
       const computed = computeSettlementFromLogs(s.customerId, s.logIds);
@@ -1009,40 +1021,51 @@ function buildSettlementSelectOptions(customerId, currentSettlementId){
   return options.join("");
 }
 
+function settlementLogbookSummary(s){
+  const linkedLogs = (s.logIds||[])
+    .map(id => state.logs.find(l => l.id === id))
+    .filter(Boolean);
+  const totalWorkMs = linkedLogs.reduce((acc, log) => acc + sumWorkMs(log), 0);
+  const totalProductCosts = round2(linkedLogs.reduce((acc, log) => acc + sumItemsAmount(log), 0));
+  const hourly = Number(state.settings.hourlyRate||0);
+  const totalLogPrice = round2((totalWorkMs / 3600000) * hourly + totalProductCosts);
+  return { linkedCount: linkedLogs.length, totalWorkMs, totalProductCosts, totalLogPrice };
+}
+
 function renderSettlementSheet(id){
   const s = state.settlements.find(x => x.id === id);
   if (!s){ closeSheet(); return; }
-  $("#sheetTitle").textContent = "Afrekening";
+  if (!s.invoiceStatus) s.invoiceStatus = "open";
+  if (!s.cashStatus) s.cashStatus = "open";
+  $('#sheetTitle').textContent = 'Afrekening';
 
-  const locked = s.status === "paid";
-  const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join("");
+  const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
 
-  // available logs for this customer
   const customerLogs = state.logs
     .filter(l => l.customerId === s.customerId)
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
-  const invT = bucketTotals(s.lines, "invoice");
-  const cashT = bucketTotals(s.lines, "cash");
+  const invT = bucketTotals(s.lines, 'invoice');
+  const cashT = bucketTotals(s.lines, 'cash');
   const grand = round2(invT.total + cashT.subtotal);
+  const summary = settlementLogbookSummary(s);
 
-  $("#sheetActions").innerHTML = `
-    <button class="btn ${s.status==="draft"?"primary":""}" id="markDraft">Draft</button>
-    <button class="btn ${s.status==="calculated"?"primary":""}" id="markCalc">Berekend</button>
-    <button class="btn ${s.status==="paid"?"primary":""}" id="markPaid">Betaald</button>
+  const invoiceLocked = s.invoiceStatus === 'paid';
+  const cashLocked = s.cashStatus === 'paid';
+
+  $('#sheetActions').innerHTML = `
     <button class="btn danger" id="delSettlement">Verwijder</button>
   `;
 
-  const productOptions = state.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)} • ${fmtMoney(p.unitPrice)})</option>`).join("");
+  const productOptions = state.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)} • ${fmtMoney(p.unitPrice)})</option>`).join('');
 
-  $("#sheetBody").innerHTML = `
+  $('#sheetBody').innerHTML = `
     <div class="stack">
-
       <div class="card stack">
         <div class="row space">
           <div>
             <div class="item-title">${esc(cname(s.customerId))}</div>
-            <div class="small mono">${esc(s.date)} • ${statusLabelNL(s.status)}</div>
+            <div class="small mono">${esc(s.date)} • #${esc((s.id||'').slice(0,8))}</div>
           </div>
           <span class="badge mono">Totaal ${fmtMoney(grand)}</span>
         </div>
@@ -1050,230 +1073,205 @@ function renderSettlementSheet(id){
         <div class="row">
           <div style="flex:2; min-width:220px;">
             <label>Klant</label>
-            <select id="sCustomer" ${locked ? "disabled":""}>${customerOptions}</select>
+            <select id="sCustomer">${customerOptions}</select>
           </div>
           <div style="flex:1; min-width:160px;">
             <label>Datum</label>
-            <input id="sDate" value="${esc(s.date||todayISO())}" ${locked ? "disabled":""} />
-          </div>
-          <div style="flex:1; min-width:160px;">
-            <label>Uurtarief</label>
-            <input id="sHourly" inputmode="decimal" value="${esc(String(state.settings.hourlyRate ?? 38))}" ${locked ? "disabled":""} />
+            <input id="sDate" value="${esc(s.date||todayISO())}" />
           </div>
         </div>
+      </div>
 
-        <div class="small">Kies logs hieronder, klik “Herbereken” om standaardregels te maken. Daarna kan je per regel Factuur/Cash kiezen.</div>
+      <div class="card stack">
+        <div class="row space">
+          <div class="item-title">Logboek totaal</div>
+          <span class="badge mono">${summary.linkedCount} logs</span>
+        </div>
         <div class="row">
-          <button class="btn" id="btnRecalc" ${locked ? "disabled":""}>Herbereken uit logs</button>
+          <div class="badge mono">Werkduur ${durMsToHM(summary.totalWorkMs)}</div>
+          <div class="badge mono">Productkosten ${fmtMoney(summary.totalProductCosts)}</div>
+          <div class="badge mono">Logboek prijs ${fmtMoney(summary.totalLogPrice)}</div>
         </div>
       </div>
 
       <div class="card stack">
         <div class="item-title">Gekoppelde logs</div>
-        <div class="small">Tik om (de)selecteren. Betaald = vergrendeld.</div>
+        <div class="small">Tik om (de)selecteren. Koppeling bepaalt alleen totaal hierboven.</div>
         <div class="list" id="sLogs">
           ${customerLogs.slice(0,30).map(l=>{
-            const checked = (s.logIds||[]).includes(l.id) ? "checked" : "";
+            const checked = (s.logIds||[]).includes(l.id) ? 'checked' : '';
             const cls = statusClassFromStatus(getWorkLogStatus(l.id));
             return `
-              <label class="item ${cls}" style="cursor:pointer;">
+              <label class="item item-compact ${cls}" style="cursor:pointer;">
                 <div class="item-main">
                   <div class="item-title">${esc(l.date)} • ${durMsToHM(sumWorkMs(l))}</div>
-                  <div class="item-sub">${esc(l.note||"")}</div>
+                  <div class="item-sub mono">Producten ${fmtMoney(sumItemsAmount(l))}</div>
                 </div>
                 <div class="item-right">
-                  <input type="checkbox" data-logpick="${l.id}" ${checked} ${locked?"disabled":""}/>
+                  <input type="checkbox" data-logpick="${l.id}" ${checked}/>
                 </div>
               </label>
             `;
-          }).join("") || `<div class="small">Geen logs.</div>`}
+          }).join('') || `<div class="small">Geen logs.</div>`}
         </div>
+        <button class="btn" id="btnRecalc">Herbereken uit logs</button>
       </div>
 
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Factuur</div>
-          <span class="badge mono">${fmtMoney(invT.total)}</span>
+          <span class="pill ${s.invoiceStatus==='paid'?'pill-paid':'pill-open'} mono">${fmtMoney(invT.total)}</span>
         </div>
-        <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw ${fmtMoney(invT.vat)}</div>
+        <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw 21% ${fmtMoney(invT.vat)}</div>
         <div class="list">
-          ${renderSettlementLines(s, "invoice", locked)}
+          ${renderSettlementLines(s, 'invoice', invoiceLocked)}
         </div>
-        <button class="btn" id="addInvoiceLine" ${locked?"disabled":""}>+ Regel toevoegen (factuur)</button>
+        <div class="row">
+          <button class="btn" id="addInvoiceLine" ${invoiceLocked?'disabled':''}>+ Regel toevoegen (Factuur)</button>
+          <button class="btn" id="markInvoicePaid" ${s.invoiceStatus==='paid'?'disabled':''}>Markeer Factuur als Betaald</button>
+          <button class="btn" id="markInvoiceOpen" ${s.invoiceStatus==='open'?'disabled':''}>Zet Factuur terug Open</button>
+        </div>
       </div>
 
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Cash</div>
-          <span class="badge mono">${fmtMoney(cashT.subtotal)}</span>
+          <span class="pill ${s.cashStatus==='paid'?'pill-paid':'pill-open'} mono">${fmtMoney(cashT.subtotal)}</span>
         </div>
-        <div class="small">Cash zonder btw.</div>
+        <div class="small mono">Cash zonder btw.</div>
         <div class="list">
-          ${renderSettlementLines(s, "cash", locked)}
+          ${renderSettlementLines(s, 'cash', cashLocked)}
         </div>
-        <button class="btn" id="addCashLine" ${locked?"disabled":""}>+ Regel toevoegen (cash)</button>
+        <div class="row">
+          <button class="btn" id="addCashLine" ${cashLocked?'disabled':''}>+ Regel toevoegen (Cash)</button>
+          <button class="btn" id="markCashPaid" ${s.cashStatus==='paid'?'disabled':''}>Markeer Cash als Betaald</button>
+          <button class="btn" id="markCashOpen" ${s.cashStatus==='open'?'disabled':''}>Zet Cash terug Open</button>
+        </div>
       </div>
 
-      <div class="card stack" id="lineAdder" class="hidden"></div>
-
-      <div class="small">Tip: status “Berekend” en “Betaald” staan bovenaan. Betaald vergrendelt alles.</div>
-
+      <div class="card stack" id="lineAdder"></div>
     </div>
   `;
 
-  // wire header buttons
-  $("#markDraft").onclick = ()=>{
-    if (locked && s.status==="paid"){ if (!confirmAction("Betaald terug naar draft?")) return; }
-    s.status="draft"; saveState(); renderSheet(); render();
-  };
-  $("#markCalc").onclick = ()=>{
-    if (!confirmAction("Markeren als berekend?")) return;
-    s.status="calculated"; saveState(); renderSheet(); render();
-  };
-  $("#markPaid").onclick = ()=>{
-    if (!confirmAction("Markeren als betaald? (vergrendelt afrekening)")) return;
-    s.status="paid"; saveState(); renderSheet(); render();
-  };
-
-  $("#delSettlement").onclick = ()=>{
+  $('#delSettlement').onclick = ()=>{
     if (!confirmDelete(`Afrekening ${s.date} — ${cname(s.customerId)}`)) return;
-    // unlink logs
-    for (const id of (s.logIds||[])){
-      // nothing else to do; status of logs is derived
-    }
     state.settlements = state.settlements.filter(x => x.id !== s.id);
     saveState(); closeSheet();
   };
 
-  // basic edit fields
-  $("#sCustomer").onchange = ()=>{
-    s.customerId = $("#sCustomer").value;
+  $('#markInvoicePaid').onclick = ()=>{
+    if (!confirmAction('Factuur markeren als betaald?')) return;
+    s.invoiceStatus = 'paid';
+    saveState(); renderSheet(); render();
+  };
+  $('#markInvoiceOpen').onclick = ()=>{
+    if (!confirmAction('Factuur terug open zetten?')) return;
+    s.invoiceStatus = 'open';
+    saveState(); renderSheet(); render();
+  };
+  $('#markCashPaid').onclick = ()=>{
+    if (!confirmAction('Cash markeren als betaald?')) return;
+    s.cashStatus = 'paid';
+    saveState(); renderSheet(); render();
+  };
+  $('#markCashOpen').onclick = ()=>{
+    if (!confirmAction('Cash terug open zetten?')) return;
+    s.cashStatus = 'open';
+    saveState(); renderSheet(); render();
+  };
+
+  $('#sCustomer').onchange = ()=>{
+    s.customerId = $('#sCustomer').value;
     s.logIds = [];
-    s.lines = [];
     saveState(); renderSheet(); render();
   };
-  $("#sDate").onchange = ()=>{
-    s.date = ($("#sDate").value||"").trim() || todayISO();
-    saveState(); renderSheet(); render();
-  };
-  $("#sHourly").onchange = ()=>{
-    const v = Number(String($("#sHourly").value).replace(",", ".")||"0");
-    if (v>0) state.settings.hourlyRate = v;
+  $('#sDate').onchange = ()=>{
+    s.date = ($('#sDate').value||'').trim() || todayISO();
     saveState(); renderSheet(); render();
   };
 
-  // log pick
-  $("#sheetBody").querySelectorAll("[data-logpick]").forEach(cb=>{
-    cb.addEventListener("change", ()=>{
-      const logId = cb.getAttribute("data-logpick");
-
-      // prevent log in another settlement (unless it's this one)
+  $('#sheetBody').querySelectorAll('[data-logpick]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const logId = cb.getAttribute('data-logpick');
       const other = settlementForLog(logId);
       if (other && other.id !== s.id){
-        alert("Deze log zit al in een andere afrekening. Open die afrekening of ontkoppel eerst.");
+        alert('Deze log zit al in een andere afrekening. Open die afrekening of ontkoppel eerst.');
         cb.checked = false;
         return;
       }
-
-      if (cb.checked){
-        s.logIds = Array.from(new Set([...(s.logIds||[]), logId]));
-      } else {
-        s.logIds = (s.logIds||[]).filter(x => x !== logId);
-      }
+      if (cb.checked) s.logIds = Array.from(new Set([...(s.logIds||[]), logId]));
+      else s.logIds = (s.logIds||[]).filter(x => x !== logId);
       saveState(); renderSheet(); render();
     });
   });
 
-  $("#btnRecalc").onclick = ()=>{
+  $('#btnRecalc').onclick = ()=>{
     const computed = computeSettlementFromLogs(s.customerId, s.logIds||[]);
-    // preserve bucket choices by productId+desc
-    const prev = new Map((s.lines||[]).map(li => [li.productId+"|"+li.description, li.bucket]));
-    s.lines = computed.lines.map(li => ({
-      ...li,
-      bucket: prev.get(li.productId+"|"+li.description) || li.bucket
-    }));
-    // if calculated, keep calculated; if paid, blocked anyway
+    const prev = new Map((s.lines||[]).map(li => [li.productId+'|'+li.description, li.bucket]));
+    s.lines = computed.lines.map(li => ({ ...li, bucket: prev.get(li.productId+'|'+li.description) || li.bucket }));
     saveState(); renderSheet(); render();
   };
 
-  // line edits: qty/unitPrice/bucket delete
-  $("#sheetBody").querySelectorAll("[data-line-qty]").forEach(inp=>{
-    inp.addEventListener("change", ()=>{
-      const lineId = inp.getAttribute("data-line-qty");
+  $('#sheetBody').querySelectorAll('[data-line-qty]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const lineId = inp.getAttribute('data-line-qty');
       const line = s.lines.find(x=>x.id===lineId);
       if (!line) return;
-      line.qty = Number(String(inp.value).replace(",", ".")||"0");
+      line.qty = Number(String(inp.value).replace(',', '.')||'0');
       saveState(); renderSheet(); render();
     });
   });
-  $("#sheetBody").querySelectorAll("[data-line-price]").forEach(inp=>{
-    inp.addEventListener("change", ()=>{
-      const lineId = inp.getAttribute("data-line-price");
+  $('#sheetBody').querySelectorAll('[data-line-price]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const lineId = inp.getAttribute('data-line-price');
       const line = s.lines.find(x=>x.id===lineId);
       if (!line) return;
-      line.unitPrice = Number(String(inp.value).replace(",", ".")||"0");
+      line.unitPrice = Number(String(inp.value).replace(',', '.')||'0');
       saveState(); renderSheet(); render();
     });
   });
-  $("#sheetBody").querySelectorAll("[data-line-bucket]").forEach(sel=>{
-    sel.addEventListener("change", ()=>{
-      const lineId = sel.getAttribute("data-line-bucket");
-      const line = s.lines.find(x=>x.id===lineId);
-      if (!line) return;
-      line.bucket = sel.value;
-      saveState(); renderSheet(); render();
-    });
-  });
-  $("#sheetBody").querySelectorAll("[data-line-del]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      const lineId = btn.getAttribute("data-line-del");
-      if (!confirmDelete("Regel verwijderen")) return;
+  $('#sheetBody').querySelectorAll('[data-line-del]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const lineId = btn.getAttribute('data-line-del');
+      if (!confirmDelete('Regel verwijderen')) return;
       s.lines = (s.lines||[]).filter(x=>x.id!==lineId);
       saveState(); renderSheet(); render();
     });
   });
 
-  // add line UI
-  $("#addInvoiceLine").onclick = ()=> showLineAdder(s, "invoice", productOptions);
-  $("#addCashLine").onclick = ()=> showLineAdder(s, "cash", productOptions);
+  $('#addInvoiceLine').onclick = ()=> showLineAdder(s, 'invoice', productOptions);
+  $('#addCashLine').onclick = ()=> showLineAdder(s, 'cash', productOptions);
 }
 
 function renderSettlementLines(s, bucket, locked){
-  const lines = (s.lines||[]).filter(l => (l.bucket||"invoice")===bucket);
+  const lines = (s.lines||[]).filter(l => (l.bucket||'invoice')===bucket);
   if (!lines.length) return `<div class="small">Geen regels.</div>`;
   return lines.map(l=>{
     const amount = lineAmount(l);
     return `
-      <div class="item">
+      <div class="item item-compact">
         <div class="item-main">
           <div class="item-title">${esc(l.description || pname(l.productId))}</div>
-          <div class="item-sub mono">${esc(l.unit||"")} • totaal ${fmtMoney(amount)} ${bucket==="invoice" ? `• btw ${fmtMoney(lineVat(l))}` : ""}</div>
+          <div class="item-sub mono">qty ${esc(String(l.qty ?? 0))} • ${fmtMoney(Number(l.unitPrice||0))} • regel ${fmtMoney(amount)} ${bucket==='invoice' ? `• btw ${fmtMoney(lineVat(l))}` : ''}</div>
           <div class="row">
             <div style="flex:1; min-width:120px;">
               <label>Aantal</label>
-              <input ${locked?"disabled":""} data-line-qty="${l.id}" inputmode="decimal" value="${esc(String(l.qty ?? 0))}" />
+              <input ${locked?'disabled':''} data-line-qty="${l.id}" inputmode="decimal" value="${esc(String(l.qty ?? 0))}" />
             </div>
             <div style="flex:1; min-width:140px;">
               <label>Prijs / eenheid</label>
-              <input ${locked?"disabled":""} data-line-price="${l.id}" inputmode="decimal" value="${esc(String(l.unitPrice ?? 0))}" />
-            </div>
-            <div style="flex:1; min-width:160px;">
-              <label>Bucket</label>
-              <select ${locked?"disabled":""} data-line-bucket="${l.id}">
-                <option value="invoice" ${l.bucket==="invoice"?"selected":""}>factuur</option>
-                <option value="cash" ${l.bucket==="cash"?"selected":""}>cash</option>
-              </select>
+              <input ${locked?'disabled':''} data-line-price="${l.id}" inputmode="decimal" value="${esc(String(l.unitPrice ?? 0))}" />
             </div>
           </div>
         </div>
         <div class="item-right">
-          <button class="iconbtn" ${locked?"disabled":""} data-line-del="${l.id}" title="Verwijder">
+          <button class="iconbtn" ${locked?'disabled':''} data-line-del="${l.id}" title="Verwijder">
             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
         </div>
       </div>
     `;
-  }).join("");
+  }).join('');
 }
 
 function showLineAdder(s, bucket, productOptions){

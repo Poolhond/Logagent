@@ -163,6 +163,35 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   color: var(--muted);
 }
 
+.item-compact{
+  padding: 10px 12px;
+}
+
+.settlement-badges{
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  font-size:12px;
+  color:var(--text);
+}
+.pill span{ color:var(--muted); }
+.pill-open{
+  background: rgba(255, 188, 56, 0.14);
+  border-color: rgba(255, 188, 56, 0.45);
+}
+.pill-paid{
+  background: rgba(0, 160, 90, 0.14);
+  border-color: rgba(0, 160, 90, 0.45);
+}
+
 .status-linked{ background: var(--status-linked-bg); border-left:4px solid var(--status-linked-border); }
 .status-calculated{ background: var(--status-calculated-bg); border-left:4px solid var(--status-calculated-border); }
 .status-paid{ background: var(--status-paid-bg); border-left:4px solid var(--status-paid-border); }
