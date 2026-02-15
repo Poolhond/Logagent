@@ -1311,98 +1311,66 @@ function renderLogSheet(id){
   const settlementOptions = buildSettlementSelectOptions(log.customerId, af?.id);
 
   const productOptions = state.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)} • ${fmtMoney(p.unitPrice)})</option>`).join("");
+  const statusLabel = !af ? "vrij" : (isSettlementPaid(af) ? "betaald" : "berekend");
+  const statusClass = !af ? "pill-neutral" : (isSettlementPaid(af) ? "pill-paid" : "pill-open");
 
   $("#sheetBody").innerHTML = `
-    <div class="stack">
-
-      <div class="card stack">
-        <div class="row space">
-          <div>
-            <div class="item-title">${esc(cname(log.customerId))}</div>
-            <div class="small mono">${esc(log.date)} • Werk ${durMsToHM(sumWorkMs(log))} • Pauze ${durMsToHM(sumBreakMs(log))}</div>
-          </div>
-          <span class="badge">${af ? statusLabelNL(af.status) : "vrij"}</span>
-        </div>
-
-        <div class="hr"></div>
-
+    <div class="stack log-detail-compact">
+      <section class="compact-section log-detail-header">
+        <div class="log-h1">${esc(cname(log.customerId))}</div>
+        <div class="small mono">${esc(log.date)} • Werk ${durMsToHM(sumWorkMs(log))} • Pauze ${durMsToHM(sumBreakMs(log))}</div>
         <div class="row">
-          <div style="flex:1; min-width:220px;">
-            <label>Afrekening</label>
-            <select id="logSettlement" ${locked ? "disabled" : ""}>
-              ${settlementOptions}
-            </select>
-            <div class="small">Koppel via dropdown aan bestaande of nieuwe afrekening.</div>
-          </div>
-          <div style="flex:1; min-width:220px;">
-            <label>Notitie</label>
-            <input id="logNote" value="${esc(log.note||"")}" />
-          </div>
+          <span class="pill ${statusClass}">${statusLabel}</span>
         </div>
-        <button class="btn primary" id="saveLog">Opslaan</button>
-      </div>
+      </section>
 
-      <div class="card stack">
+      <section class="compact-section compact-row">
+        <label>Afrekening</label>
+        <select id="logSettlement" ${locked ? "disabled" : ""}>
+          ${settlementOptions}
+        </select>
+      </section>
+
+      <section class="compact-section stack">
         <div class="item-title">Segments</div>
-        <div class="small mono">Werk: ${durMsToHM(sumWorkMs(log))} • Pauze: ${durMsToHM(sumBreakMs(log))}</div>
-        <div class="list">
+        <div class="compact-lines">
           ${(log.segments||[]).map(s=>`
-            <div class="item">
-              <div class="item-main">
-                <div class="item-title">${esc(s.type)}</div>
-                <div class="item-sub mono">${fmtClock(s.start)} → ${s.end ? fmtClock(s.end) : "…"} </div>
-              </div>
-              <div class="item-right"><span class="badge">${s.end? "ok":"open"}</span></div>
+            <div class="compact-line mono">
+              ${s.type === "break" ? "Pauze" : "Werk"} ${fmtClock(s.start)}–${s.end ? fmtClock(s.end) : "…"}
             </div>
           `).join("") || `<div class="small">Geen segments.</div>`}
         </div>
-      </div>
+      </section>
 
-      <div class="card stack">
+      <section class="compact-section stack">
         <div class="row space">
-          <div class="item-title">Producten in deze log</div>
-          <span class="badge mono">Totaal ${fmtMoney(sumItemsAmount(log))}</span>
+          <div class="item-title">Producten</div>
+          <span class="small mono">Totaal ${fmtMoney(sumItemsAmount(log))}</span>
         </div>
-
-        <div class="list" id="logItems">
-          ${renderLogItems(log)}
+        <div class="log-lines-wrap">
+          ${renderLogItems(log, productOptions)}
         </div>
+      </section>
 
-        <div class="hr"></div>
-
-        <div class="item-title">Product toevoegen</div>
-        <div class="row">
-          <div style="flex:2; min-width:220px;">
-            <label>Product</label>
-            <select id="addProd">${productOptions}</select>
-          </div>
-          <div style="flex:1; min-width:120px;">
-            <label>Aantal</label>
-            <input id="addQty" inputmode="decimal" value="1" />
-          </div>
-          <div style="flex:1; min-width:140px;">
-            <label>Prijs / eenheid</label>
-            <input id="addPrice" inputmode="decimal" value="${esc(String(state.products[0]?.unitPrice ?? 0))}" />
-          </div>
-        </div>
-        <button class="btn" id="addItem">Toevoegen</button>
-      </div>
-
+      <section class="compact-section">
+        <label>Notitie</label>
+        <input id="logNote" value="${esc(log.note||"")}" />
+      </section>
     </div>
   `;
 
-  // wire
-  $("#saveLog").onclick = ()=>{
+  // wire (autosave)
+  $("#logNote").addEventListener("change", ()=>{
     log.note = ($("#logNote").value||"").trim();
-    saveState(); render();
-    alert("Opgeslagen.");
-  };
+    saveState();
+    render();
+  });
 
-  $("#addProd").onchange = ()=>{
+  $("#sheetBody").querySelectorAll("[data-add-prod]").forEach(sel => sel.onchange = ()=>{
     const pid = $("#addProd").value;
     const p = getProduct(pid);
     $("#addPrice").value = String(p?.unitPrice ?? 0);
-  };
+  });
 
   $("#addItem").onclick = ()=>{
     const pid = $("#addProd").value;
@@ -1431,6 +1399,7 @@ function renderLogSheet(id){
       if (!it) return;
       if (field === "qty") it.qty = Number(String(inp.value).replace(",", ".") || "0");
       if (field === "unitPrice") it.unitPrice = Number(String(inp.value).replace(",", ".") || "0");
+      if (field === "productId") it.productId = inp.value;
       saveState(); renderSheet();
     });
   });
@@ -1490,34 +1459,36 @@ function renderLogSheet(id){
   };
 }
 
-function renderLogItems(log){
-  if (!(log.items||[]).length) return `<div class="small">Nog geen producten.</div>`;
-  return (log.items||[]).map(it=>{
-    const p = getProduct(it.productId);
+function renderLogItems(log, productOptions){
+  const rows = (log.items||[]).map(it=>{
     return `
-      <div class="item">
-        <div class="item-main">
-          <div class="item-title">${esc(p?.name || "Product")}</div>
-          <div class="item-sub mono">${esc(p?.unit || "keer")} • totaal ${fmtMoney((Number(it.qty)||0)*(Number(it.unitPrice)||0))}</div>
-          <div class="row">
-            <div style="flex:1; min-width:120px;">
-              <label>Aantal</label>
-              <input data-edit-log-item="${it.id}" data-field="qty" inputmode="decimal" value="${esc(String(it.qty ?? 0))}" />
-            </div>
-            <div style="flex:1; min-width:140px;">
-              <label>Prijs / eenheid</label>
-              <input data-edit-log-item="${it.id}" data-field="unitPrice" inputmode="decimal" value="${esc(String(it.unitPrice ?? 0))}" />
-            </div>
-          </div>
-        </div>
-        <div class="item-right">
-          <button class="iconbtn" data-del-log-item="${it.id}" title="Verwijder">
+      <div class="log-lines-grid log-lines-row">
+        <select class="settlement-cell-input" data-edit-log-item="${it.id}" data-field="productId">${productOptions.replace(`value="${it.productId}"`, `value="${it.productId}" selected`)}</select>
+        <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="qty" inputmode="decimal" value="${esc(String(it.qty ?? 0))}" />
+        <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="unitPrice" inputmode="decimal" value="${esc(String(it.unitPrice ?? 0))}" />
+        <div class="num mono">${fmtMoney((Number(it.qty)||0)*(Number(it.unitPrice)||0))}</div>
+        <button class="iconbtn settlement-trash" data-del-log-item="${it.id}" title="Verwijder">
             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
-        </div>
+        </button>
       </div>
     `;
   }).join("");
+
+  return `
+    <div class="log-lines-table">
+      <div class="log-lines-grid log-lines-head">
+        <div>Product</div><div class="num">qty</div><div class="num">prijs</div><div class="num">totaal</div><div></div>
+      </div>
+      ${rows || `<div class="small">Nog geen producten.</div>`}
+      <div class="log-lines-grid log-lines-row log-lines-add">
+        <select id="addProd" data-add-prod class="settlement-cell-input">${productOptions}</select>
+        <input id="addQty" class="settlement-cell-input num" inputmode="decimal" value="1" />
+        <input id="addPrice" class="settlement-cell-input num" inputmode="decimal" value="${esc(String(state.products[0]?.unitPrice ?? 0))}" />
+        <div></div>
+        <button class="btn settlement-trash" id="addItem" title="Toevoegen">+</button>
+      </div>
+    </div>
+  `;
 }
 
 function buildSettlementSelectOptions(customerId, currentSettlementId){
