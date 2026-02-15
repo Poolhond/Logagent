@@ -91,6 +91,7 @@ function ensureUIPreferences(st){
   if (!("logCustomerId" in st.ui)) st.ui.logCustomerId = "all";
   if (!("logPeriod" in st.ui)) st.ui.logPeriod = "all";
   if (!["7d", "30d", "90d", "all"].includes(st.ui.logPeriod)) st.ui.logPeriod = "all";
+  if (!("editLogId" in st.ui)) st.ui.editLogId = null;
 }
 
 function ensureCoreProducts(st){
@@ -563,6 +564,14 @@ const ui = {
     qty: "1"
   }
 };
+
+function toggleEditLog(logId){
+  state.ui.editLogId = state.ui.editLogId === logId ? null : logId;
+  if (state.ui.editLogId !== logId) ui.logDetailSegmentEditId = null;
+  saveState();
+  renderSheet();
+  render();
+}
 
 function preferredWorkProduct(){
   return state.products.find(p => (p.name||"").trim().toLowerCase() === "werk") || state.products[0] || null;
@@ -1422,31 +1431,47 @@ function renderLogSheet(id){
   const statusClass = statusClassFromStatus(status);
   const statusPillClass = status === "paid" ? "pill-paid" : status === "calculated" ? "pill-calc" : status === "linked" ? "pill-open" : "pill-neutral";
   const statusLabel = status === "free" ? "vrij" : status === "linked" ? "gekoppeld" : status === "calculated" ? "berekend" : "betaald";
+  const isEditing = state.ui.editLogId === log.id;
 
-  $("#sheetBody").innerHTML = `
-    <div class="stack log-detail-compact">
+  function renderContentHeader(currentLog){
+    return `
       <section class="compact-section log-detail-header ${statusClass}">
-        <div class="log-h1">${esc(cname(log.customerId))}</div>
-        <div class="small mono">${esc(formatLogDatePretty(log.date))}</div>
+        <div class="log-detail-header-top">
+          <div>
+            <h1 class="log-h1">${esc(cname(currentLog.customerId))}</h1>
+            ${isEditing
+              ? `<input class="log-date-input mono" id="logDate" type="date" value="${esc(currentLog.date || todayISO())}" />`
+              : `<div class="small mono muted">${esc(formatLogDatePretty(currentLog.date))}</div>`}
+          </div>
+          <div class="log-header-actions">
+            ${isEditing
+              ? `<button class="iconbtn iconbtn-sm" id="doneEditLog" type="button" title="Gereed" aria-label="Gereed">
+                   <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12l5 5 9-9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                 </button>`
+              : `<button class="iconbtn iconbtn-sm" id="editLog" type="button" title="Bewerk" aria-label="Bewerk">
+                   <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 20h9" stroke-linecap="round"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linejoin="round"/></svg>
+                 </button>`}
+          </div>
+        </div>
         <div class="row">
           <span class="pill ${statusPillClass}">${statusLabel}</span>
         </div>
       </section>
+    `;
+  }
 
-      <section class="compact-section compact-row">
-        <label>Afrekening</label>
-        <select id="logSettlement" ${locked ? "disabled" : ""}>
-          ${settlementOptions}
-        </select>
-      </section>
-
+  function renderSegments(currentLog, editing){
+    return `
       <section class="compact-section stack">
         <div class="row space">
           <div class="item-title">Segments</div>
-          <button class="btn" id="addSegment" type="button">+ segment</button>
+          ${editing ? `<button class="btn" id="addSegment" type="button">+ segment</button>` : ""}
         </div>
         <div class="compact-lines">
-          ${(log.segments||[]).map(s=>{
+          ${(currentLog.segments||[]).map(s=>{
+            if (!editing){
+              return `<div class="segment-row segment-row-static mono">${s.type === "break" ? "Pauze" : "Werk"} ${s.start ? fmtClock(s.start) : "…"}–${s.end ? fmtClock(s.end) : "…"}</div>`;
+            }
             const isOpen = ui.logDetailSegmentEditId === s.id;
             return `
               <div class="segment-row ${isOpen ? "is-open" : ""}">
@@ -1465,7 +1490,9 @@ function renderLogSheet(id){
                         </select>
                       </label>
                     </div>
-                    <button class="btn danger" type="button" data-del-segment="${s.id}">Verwijder segment</button>
+                    <button class="iconbtn iconbtn-sm danger" type="button" data-del-segment="${s.id}" title="Verwijder segment" aria-label="Verwijder segment">
+                      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18" stroke-linecap="round"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6" stroke-linecap="round"/></svg>
+                    </button>
                   </div>
                 ` : ""}
               </div>
@@ -1473,6 +1500,21 @@ function renderLogSheet(id){
           }).join("") || `<div class="small">Geen segments.</div>`}
         </div>
       </section>
+    `;
+  }
+
+  $("#sheetBody").innerHTML = `
+    <div class="stack log-detail-compact">
+      ${renderContentHeader(log)}
+
+      <section class="compact-section compact-row">
+        <label>Afrekening</label>
+        <select id="logSettlement" ${locked ? "disabled" : ""}>
+          ${settlementOptions}
+        </select>
+      </section>
+
+      ${renderSegments(log, isEditing)}
 
       <section class="compact-section stack">
         <div class="row space">
@@ -1498,7 +1540,19 @@ function renderLogSheet(id){
     render();
   });
 
-  $("#addSegment").addEventListener("click", ()=>{
+  $("#editLog")?.addEventListener("click", ()=> toggleEditLog(log.id));
+  $("#doneEditLog")?.addEventListener("click", ()=> toggleEditLog(log.id));
+
+  $("#logDate")?.addEventListener("change", ()=>{
+    const nextDate = ($("#logDate").value||"").trim();
+    if (!nextDate) return;
+    log.date = nextDate;
+    saveState();
+    renderSheet();
+    render();
+  });
+
+  $("#addSegment")?.addEventListener("click", ()=>{
     log.segments = log.segments || [];
     const seg = { id: uid(), type: "work", start: null, end: null };
     log.segments.push(seg);
