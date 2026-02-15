@@ -556,8 +556,41 @@ function computeSettlementFromLogs(customerId, logIds){
 const ui = {
   navStack: [{ view: "logs" }],
   transition: null,
-  logDetailSegmentEditId: null
+  logDetailSegmentEditId: null,
+  activeLogQuickAdd: {
+    open: false,
+    productId: null,
+    qty: "1"
+  }
 };
+
+function preferredWorkProduct(){
+  return state.products.find(p => (p.name||"").trim().toLowerCase() === "werk") || state.products[0] || null;
+}
+
+function addProductToLog(logId, productId, qty, unitPrice){
+  const log = state.logs.find(l => l.id === logId);
+  if (!log) return false;
+  const product = state.products.find(p => p.id === productId) || preferredWorkProduct();
+  if (!product) return false;
+
+  const parsedQty = Number(String(qty ?? "").replace(",", "."));
+  if (!Number.isFinite(parsedQty) || parsedQty <= 0) return false;
+
+  const priceSource = unitPrice ?? product.unitPrice ?? 0;
+  const parsedUnitPrice = Number(String(priceSource).replace(",", "."));
+  const safeUnitPrice = Number.isFinite(parsedUnitPrice) ? parsedUnitPrice : 0;
+
+  log.items = log.items || [];
+  log.items.push({
+    id: uid(),
+    productId: product.id,
+    qty: parsedQty,
+    unitPrice: safeUnitPrice,
+    note: ""
+  });
+  return true;
+}
 
 function currentView(){
   return ui.navStack[ui.navStack.length - 1] || { view: "logs" };
@@ -750,14 +783,26 @@ function renderLogs(){
         </div>
         <span class="badge mono">Werk: ${durMsToHM(sumWorkMs(active))}</span>
       </div>
+      <div class="small mono">Producten: ${fmtMoney(sumItemsAmount(active))}</div>
 
-      <div class="row">
-        <button class="btn primary" id="btnPause">${currentOpenSegment(active)?.type === "break" ? "Stop pauze" : "Start pauze"}</button>
-        <button class="btn danger" id="btnStop">Stop</button>
-        <button class="btn" id="btnOpenActive">Open</button>
+      <div class="active-log-actions" role="group" aria-label="Actieve werklog acties">
+        <button class="icon-toggle icon-toggle-neutral ${currentOpenSegment(active)?.type === "break" ? "is-active icon-toggle-pause" : ""}" id="btnPause" title="${currentOpenSegment(active)?.type === "break" ? "Stop pauze" : "Start pauze"}" aria-label="${currentOpenSegment(active)?.type === "break" ? "Stop pauze" : "Start pauze"}">
+          ${currentOpenSegment(active)?.type === "break"
+            ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M8 6l10 6-10 6z" stroke-linejoin="round"/></svg>`
+            : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M8 5v14M16 5v14" stroke-linecap="round"/></svg>`}
+        </button>
+        <button class="icon-toggle icon-toggle-stop" id="btnStop" title="Stop werklog" aria-label="Stop werklog">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+        </button>
+        <button class="icon-toggle icon-toggle-neutral ${ui.activeLogQuickAdd.open ? "is-active" : ""}" id="btnToggleQuickAdd" title="Product toevoegen" aria-label="Product toevoegen">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+        </button>
+        <button class="icon-toggle icon-toggle-neutral" id="btnOpenActive" title="Open details" aria-label="Open details">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
       </div>
 
-      <div class="small">Tip: producten voeg je toe via “Open”.</div>
+      ${ui.activeLogQuickAdd.open ? `<div class="active-quick-add"><select id="activeQuickProduct">${state.products.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select><input id="activeQuickQty" inputmode="decimal" value="${esc(ui.activeLogQuickAdd.qty || "1")}" placeholder="qty" /><button class="iconbtn" id="btnQuickAddProduct" title="Voeg product toe" aria-label="Voeg product toe"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button></div>` : ""}
     </div>
   ` : "";
 
@@ -808,6 +853,12 @@ function renderLogs(){
 
   // actions
   if (active){
+    const defaultProduct = ui.activeLogQuickAdd.productId
+      ? state.products.find(p => p.id === ui.activeLogQuickAdd.productId)
+      : preferredWorkProduct();
+    if (!ui.activeLogQuickAdd.productId && defaultProduct) ui.activeLogQuickAdd.productId = defaultProduct.id;
+    if (!ui.activeLogQuickAdd.qty) ui.activeLogQuickAdd.qty = "1";
+
     $("#btnPause")?.addEventListener("click", ()=>{
       const seg = currentOpenSegment(active);
       if (!seg) openSegment(active,"work");
@@ -819,9 +870,42 @@ function renderLogs(){
       closeOpenSegment(active);
       active.closedAt = now();
       state.activeLogId = null;
+      ui.activeLogQuickAdd.open = false;
       saveState(); render();
     });
+    $("#btnToggleQuickAdd")?.addEventListener("click", ()=>{
+      ui.activeLogQuickAdd.open = !ui.activeLogQuickAdd.open;
+      const fallback = preferredWorkProduct();
+      if (!ui.activeLogQuickAdd.productId && fallback) ui.activeLogQuickAdd.productId = fallback.id;
+      renderLogs();
+    });
     $("#btnOpenActive")?.addEventListener("click", ()=> openSheet("log", active.id));
+
+    const productSelect = $("#activeQuickProduct");
+    if (productSelect){
+      productSelect.value = ui.activeLogQuickAdd.productId || defaultProduct?.id || "";
+      productSelect.addEventListener("change", ()=>{
+        ui.activeLogQuickAdd.productId = productSelect.value || preferredWorkProduct()?.id || null;
+      });
+    }
+    const qtyInput = $("#activeQuickQty");
+    qtyInput?.addEventListener("input", ()=>{
+      ui.activeLogQuickAdd.qty = qtyInput.value;
+    });
+    $("#btnQuickAddProduct")?.addEventListener("click", ()=>{
+      const productId = productSelect?.value || preferredWorkProduct()?.id || null;
+      const product = productId ? getProduct(productId) : preferredWorkProduct();
+      const qty = qtyInput?.value || ui.activeLogQuickAdd.qty || "1";
+      const ok = addProductToLog(active.id, product?.id, qty, product?.unitPrice ?? 0);
+      if (!ok){
+        alert("Ongeldige hoeveelheid. Vul een qty groter dan 0 in.");
+        return;
+      }
+      ui.activeLogQuickAdd.productId = product?.id || null;
+      ui.activeLogQuickAdd.qty = "1";
+      saveState();
+      render();
+    });
   }
 
   el.querySelectorAll("[data-open-log]").forEach(x=>{
