@@ -63,8 +63,14 @@ function formatMinutesAsDuration(totalMinutes){
   const m = minutes % 60;
   return `${h}u ${String(m).padStart(2, "0")}m`;
 }
+function formatDurationCompact(totalMinutes){
+  const minutes = Math.max(0, Math.floor(Number(totalMinutes) || 0));
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}u${String(m).padStart(2, "0")}m`;
+}
 function round2(n){ return Math.round((Number(n||0))*100)/100; }
-function formatLogDatePretty(isoDate){
+function formatDatePretty(isoDate){
   if (!isoDate) return "";
   const [y, m, d] = String(isoDate).split("-").map(Number);
   if (!y || !m || !d) return String(isoDate);
@@ -74,6 +80,12 @@ function formatLogDatePretty(isoDate){
   const monthNames = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
   const yy = String(y).slice(-2);
   return `${dayNames[dt.getDay()]} ${d} ${monthNames[m - 1]} ${yy}`;
+}
+function formatLogDatePretty(isoDate){
+  return formatDatePretty(isoDate);
+}
+function formatMoneyEUR(amount){
+  return fmtMoney(amount);
 }
 function fmtTimeInput(ms){
   if (!Number.isFinite(ms)) return "";
@@ -503,6 +515,46 @@ function isLogLinkedElsewhere(logId, currentSettlementId){
 function getWorkLogStatus(logId){
   return logStatus(logId);
 }
+function renderLogCard(log){
+  const st = getWorkLogStatus(log.id);
+  const cls = statusClassFromStatus(st);
+  const workMinutes = Math.floor(sumWorkMs(log) / 60000);
+  const breakMinutes = Math.floor(sumBreakMs(log) / 60000);
+  const productsTotal = sumItemsAmount(log);
+  const metaRow = `
+    <div class="item-sub log-meta-row mono">
+      <span>${esc(formatDatePretty(log.date))}</span>
+      <span aria-hidden="true">·</span>
+      <span class="meta-item">
+        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        <span>${formatDurationCompact(workMinutes)}</span>
+      </span>
+      <span aria-hidden="true">·</span>
+      <span class="meta-item">
+        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M8 4v3M16 4v3M5 10h14" stroke-linecap="round"></path><rect x="5" y="7" width="14" height="13" rx="2"></rect><path d="M10 14h4" stroke-linecap="round"></path></svg>
+        <span>${formatDurationCompact(breakMinutes)}</span>
+      </span>
+      <span aria-hidden="true">·</span>
+      <span class="meta-item">
+        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M5 7h14l-1.5 7h-11z"></path><path d="M9 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>
+        <span>${formatMoneyEUR(productsTotal)}</span>
+      </span>
+    </div>
+  `;
+
+  return `
+    <div class="item ${cls}" data-open-log="${log.id}">
+      <div class="item-main">
+        <div class="item-title">${esc(cname(log.customerId))}</div>
+        ${metaRow}
+      </div>
+      <div class="item-right">
+        <span class="badge">${st==="free" ? "vrij" : (st==="linked"?"gekoppeld":st==="calculated"?"berekend":"betaald")}</span>
+      </div>
+    </div>
+  `;
+}
+
 function statusLabelNL(s){
   if (s === "draft") return "draft";
   if (s === "calculated") return "berekend";
@@ -895,21 +947,7 @@ function renderLogs(){
     });
 
   const logs = filteredLogs.slice(0, 20);
-  const list = logs.length ? logs.map(l=>{
-    const st = getWorkLogStatus(l.id);
-    const cls = statusClassFromStatus(st);
-    return `
-      <div class="item ${cls}" data-open-log="${l.id}">
-        <div class="item-main">
-          <div class="item-title">${esc(cname(l.customerId))}</div>
-          <div class="item-sub mono">${esc(l.date)} • Werk ${durMsToHM(sumWorkMs(l))} • Pauze ${durMsToHM(sumBreakMs(l))} • Producten ${fmtMoney(sumItemsAmount(l))}</div>
-        </div>
-        <div class="item-right">
-          <span class="badge">${st==="free" ? "vrij" : (st==="linked"?"gekoppeld":st==="calculated"?"berekend":"betaald")}</span>
-        </div>
-      </div>
-    `;
-  }).join("") : `<div class="small">Geen logs voor deze filter.</div>`;
+  const list = logs.length ? logs.map(renderLogCard).join("") : `<div class="small">Geen logs voor deze filter.</div>`;
 
   const customerOptions = [`<option value="all">Alle klanten</option>`, ...state.customers
     .slice()
