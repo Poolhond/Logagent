@@ -1386,6 +1386,7 @@ function renderSettlementSheet(id){
   if (!s){ closeSheet(); return; }
   if (!("invoicePaid" in s)) s.invoicePaid = false;
   if (!("cashPaid" in s)) s.cashPaid = false;
+  ensureDefaultSettlementLines(s);
   $('#sheetTitle').textContent = 'Afrekening';
 
   const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
@@ -1411,8 +1412,6 @@ function renderSettlementSheet(id){
   $('#sheetActions').innerHTML = `
     <button class="btn danger" id="delSettlement">Verwijder</button>
   `;
-
-  const productOptions = state.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)} • ${fmtMoney(p.unitPrice)})</option>`).join('');
 
   $('#sheetBody').innerHTML = `
     <div class="stack">
@@ -1501,14 +1500,11 @@ function renderSettlementSheet(id){
           <div class="item-title">Factuur</div>
           <div class="item-title mono">${fmtMoney(pay.invoiceTotal)}</div>
         </div>
-        <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw 21% ${fmtMoney(invT.vat)}</div>
-        <div class="list">
-          ${renderSettlementLines(s, 'invoice', false, 'Geen factuurregels')}
+        <div class="settlement-lines-wrap">
+          ${renderLinesTable(s, 'invoice')}
         </div>
-        <div class="row">
-          <button class="iconbtn" id="addInvoiceLine" title="Factuurregel toevoegen" aria-label="Factuurregel toevoegen">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
+        <div class="row settlement-line-actions">
+          <button class="btn" id="addInvoiceLine">+ lijn</button>
         </div>
       </div>
 
@@ -1517,18 +1513,13 @@ function renderSettlementSheet(id){
           <div class="item-title">Cash</div>
           <div class="item-title mono">${fmtMoney(pay.cashTotal)}</div>
         </div>
-        <div class="small mono">Cash zonder btw</div>
-        <div class="list">
-          ${renderSettlementLines(s, 'cash', false, 'Geen cashregels')}
+        <div class="settlement-lines-wrap">
+          ${renderLinesTable(s, 'cash')}
         </div>
-        <div class="row">
-          <button class="iconbtn" id="addCashLine" title="Cashregel toevoegen" aria-label="Cashregel toevoegen">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
+        <div class="row settlement-line-actions">
+          <button class="btn" id="addCashLine">+ lijn</button>
         </div>
       </div>
-
-      <div class="card stack" id="lineAdder"></div>
     </div>
   `;
 
@@ -1624,123 +1615,123 @@ function renderSettlementSheet(id){
     });
   });
 
-  $('#addInvoiceLine').onclick = ()=> showLineAdder(s, 'invoice', productOptions);
-  $('#addCashLine').onclick = ()=> showLineAdder(s, 'cash', productOptions);
-}
-
-function renderSettlementLines(s, bucket, locked, emptyLabel = 'Geen regels.'){
-  const lines = (s.lines||[]).filter(l => (l.bucket||'invoice')===bucket);
-  if (!lines.length) return `<div class="small">${esc(emptyLabel)}</div>`;
-  return lines.map(l=>{
-    const amount = lineAmount(l);
-    return `
-      <div class="item item-compact">
-        <div class="item-main">
-          <div class="item-title">${esc(l.description || pname(l.productId))}</div>
-          <div class="item-sub mono">qty ${esc(String(l.qty ?? 0))} • ${fmtMoney(Number(l.unitPrice||0))} • regel ${fmtMoney(amount)} ${bucket==='invoice' ? `• btw ${fmtMoney(lineVat(l))}` : ''}</div>
-          <div class="row">
-            <div style="flex:1; min-width:120px;">
-              <label>Aantal</label>
-              <input ${locked?'disabled':''} data-line-qty="${l.id}" inputmode="decimal" value="${esc(String(l.qty ?? 0))}" />
-            </div>
-            <div style="flex:1; min-width:140px;">
-              <label>Prijs / eenheid</label>
-              <input ${locked?'disabled':''} data-line-price="${l.id}" inputmode="decimal" value="${esc(String(l.unitPrice ?? 0))}" />
-            </div>
-          </div>
-        </div>
-        <div class="item-right">
-          <button class="iconbtn" ${locked?'disabled':''} data-line-del="${l.id}" title="Verwijder">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function showLineAdder(s, bucket, productOptions){
-  const mount = $("#lineAdder");
-  mount.classList.remove("hidden");
-  mount.innerHTML = `
-    <div class="card stack">
-      <div class="row space">
-        <div class="item-title">Nieuwe regel (${bucket==="invoice"?"factuur":"cash"})</div>
-        <span class="badge">invullen</span>
-      </div>
-
-      <div class="row">
-        <div style="flex:2; min-width:220px;">
-          <label>Product (optioneel)</label>
-          <select id="newLineProd">
-            <option value="">Vrije tekst</option>
-            ${productOptions}
-          </select>
-        </div>
-        <div style="flex:2; min-width:220px;">
-          <label>Omschrijving</label>
-          <input id="newLineDesc" placeholder="bv. extra groenafvoer" />
-        </div>
-      </div>
-
-      <div class="row">
-        <div style="flex:1; min-width:120px;">
-          <label>Aantal</label>
-          <input id="newLineQty" inputmode="decimal" value="1" />
-        </div>
-        <div style="flex:1; min-width:140px;">
-          <label>Eenheid</label>
-          <input id="newLineUnit" value="keer" />
-        </div>
-        <div style="flex:1; min-width:140px;">
-          <label>Prijs / eenheid</label>
-          <input id="newLinePrice" inputmode="decimal" value="0" />
-        </div>
-      </div>
-
-      <div class="row">
-        <button class="btn primary" id="newLineAdd">Toevoegen</button>
-        <button class="btn" id="newLineCancel">Annuleer</button>
-      </div>
-    </div>
-  `;
-
-  $("#newLineProd").onchange = ()=>{
-    const pid = $("#newLineProd").value;
-    const p = pid ? getProduct(pid) : null;
-    if (p){
-      $("#newLineDesc").value = p.name;
-      $("#newLineUnit").value = p.unit || "keer";
-      $("#newLinePrice").value = String(p.unitPrice ?? 0);
-    }
-  };
-
-  $("#newLineCancel").onclick = ()=>{
-    mount.classList.add("hidden");
-    mount.innerHTML = "";
-  };
-
-  $("#newLineAdd").onclick = ()=>{
-    const pid = $("#newLineProd").value || null;
-    const prod = pid ? getProduct(pid) : null;
-    const desc = ($("#newLineDesc").value||"").trim() || (prod?.name || "Regel");
-    const qty = Number(String($("#newLineQty").value).replace(",", ".")||"0");
-    const unit = ($("#newLineUnit").value||"").trim() || (prod?.unit || "keer");
-    const price = Number(String($("#newLinePrice").value).replace(",", ".")||"0");
-    if (!(qty>0)) return;
-    s.lines = s.lines || [];
-    s.lines.unshift({
-      id: uid(),
-      productId: pid,
-      description: desc,
-      unit,
-      qty,
-      unitPrice: price,
-      vatRate: prod?.vatRate ?? 0.21,
-      bucket
+  $('#sheetBody').querySelectorAll('[data-line-product]').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const lineId = sel.getAttribute('data-line-product');
+      const line = s.lines.find(x=>x.id===lineId);
+      if (!line) return;
+      const productId = sel.value || null;
+      const product = productId ? getProduct(productId) : null;
+      line.productId = productId;
+      if (product){
+        line.name = product.name;
+        line.description = product.name;
+        line.unitPrice = Number(product.unitPrice || 0);
+        if ((line.bucket || 'invoice') === 'invoice') line.vatRate = Number(product.vatRate ?? 0.21);
+      }
+      saveState(); renderSheet(); render();
     });
+  });
+
+  $('#addInvoiceLine').onclick = ()=>{
+    addSettlementLine(s, 'invoice');
     saveState(); renderSheet(); render();
   };
+  $('#addCashLine').onclick = ()=>{
+    addSettlementLine(s, 'cash');
+    saveState(); renderSheet(); render();
+  };
+}
+
+function renderLinesTable(settlement, bucket){
+  const lines = (settlement.lines||[]).filter(l => (l.bucket||'invoice')===bucket);
+  const totals = settlementTotals(settlement);
+  const footer = bucket === 'invoice'
+    ? `
+      <div class="settlement-lines-footer mono">
+        <div>Subtotaal</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceSubtotal)}</div><div></div>
+        <div>BTW 21%</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceVat)}</div><div></div>
+        <div>Totaal</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceTotal)}</div><div></div>
+      </div>
+    `
+    : `
+      <div class="settlement-lines-footer mono">
+        <div>Totaal</div><div></div><div></div><div class="num">${fmtMoney(totals.cashTotal)}</div><div></div>
+      </div>
+    `;
+
+  return `
+    <div class="settlement-lines-table">
+      <div class="settlement-lines-grid settlement-lines-head mono">
+        <div>Product</div><div>Aantal</div><div>€/eenheid</div><div class="num">Totaal</div><div></div>
+      </div>
+      ${(lines.map(l=>{
+        const rowTotal = lineAmount(l);
+        const productValue = l.productId || '';
+        return `
+          <div class="settlement-lines-grid settlement-lines-row">
+            <div>
+              <select class="settlement-cell-input" data-line-product="${l.id}">
+                <option value="">Kies product</option>
+                ${state.products.map(p=>`<option value="${p.id}" ${p.id===productValue?"selected":""}>${esc(p.name)}${p.unit ? ` (${esc(p.unit)})` : ''}</option>`).join('')}
+              </select>
+            </div>
+            <div><input class="settlement-cell-input mono" data-line-qty="${l.id}" inputmode="decimal" value="${esc((l.qty ?? '') === 0 ? '' : String(l.qty ?? ''))}" /></div>
+            <div><input class="settlement-cell-input mono" data-line-price="${l.id}" inputmode="decimal" value="${esc((l.unitPrice ?? '') === 0 ? '' : String(l.unitPrice ?? ''))}" /></div>
+            <div class="num mono">${fmtMoney(rowTotal)}</div>
+            <div>
+              <button class="iconbtn settlement-trash" data-line-del="${l.id}" title="Verwijder">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('')) || `<div class="small">Geen regels</div>`}
+      ${footer}
+    </div>
+  `;
+}
+
+function addSettlementLine(settlement, bucket){
+  settlement.lines = settlement.lines || [];
+  settlement.lines.push({
+    id: uid(),
+    productId: null,
+    name: '',
+    qty: '',
+    unitPrice: '',
+    vatRate: bucket === 'invoice' ? 0.21 : 0,
+    bucket
+  });
+}
+
+function ensureDefaultSettlementLines(settlement){
+  settlement.lines = settlement.lines || [];
+  const ensureForBucket = bucket=>{
+    ["Werk", "Groen"].forEach(productName=>{
+      const product = (state.products||[]).find(p => (p.name||'').toLowerCase() === productName.toLowerCase()) || null;
+      const hasLine = settlement.lines.some(line => {
+        const sameBucket = (line.bucket||'invoice') === bucket;
+        if (!sameBucket) return false;
+        if (product && line.productId) return line.productId === product.id;
+        const label = String(line.name || line.description || pname(line.productId) || '').toLowerCase();
+        return label === productName.toLowerCase();
+      });
+      if (hasLine) return;
+      settlement.lines.push({
+        id: uid(),
+        productId: product?.id || null,
+        name: product?.name || productName,
+        description: product?.name || productName,
+        qty: '',
+        unitPrice: product ? Number(product.unitPrice || 0) : '',
+        vatRate: bucket === 'invoice' ? Number(product?.vatRate ?? 0.21) : 0,
+        bucket
+      });
+    });
+  };
+  ensureForBucket('invoice');
+  ensureForBucket('cash');
 }
 
 // ---------- PWA register ----------
