@@ -174,6 +174,49 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   background:rgba(58,196,131,.10);
 }
 
+.icon-toggle-neutral{
+  color:var(--muted);
+}
+
+.icon-toggle.is-active.icon-toggle-pause{
+  color:#ff9a3d;
+  border-color:rgba(255,154,61,.62);
+  background:rgba(255,154,61,.10);
+}
+
+.icon-toggle-stop{
+  color:#ff6b6b;
+  border-color:rgba(255,107,107,.45);
+  background:rgba(255,107,107,.10);
+}
+
+.active-log-actions{
+  display:flex;
+  gap:10px;
+}
+
+.active-quick-add{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 88px 44px;
+  gap:8px;
+  align-items:center;
+}
+
+.active-quick-add input,
+.active-quick-add select{
+  min-height:36px;
+  padding:7px 8px;
+  border-radius:10px;
+  font-size:13px;
+}
+
+.active-quick-add .iconbtn{
+  width:44px;
+  min-height:36px;
+  padding:6px;
+  border-radius:10px;
+}
+
 .tabs{
   position:fixed; left:0; right:0; bottom:0; z-index:20;
   background: rgba(11,15,20,.92);
