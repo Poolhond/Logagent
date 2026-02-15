@@ -319,6 +319,46 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   gap:10px;
 }
 
+.log-toolbar{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.category-wrap{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+.category-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  padding:0 10px;
+  min-height:34px;
+  background: rgba(255,255,255,.015);
+}
+
+.category-pill select{
+  border:0;
+  background:transparent;
+  color:var(--text);
+  font-size:12px;
+  font-weight:700;
+  padding:0;
+  outline:none;
+  appearance:none;
+}
+
+.category-pill .icon{
+  width:14px;
+  height:14px;
+  color:var(--muted);
+}
+
 .segmented{
   display:inline-flex;
   border:1px solid var(--border);
@@ -367,6 +407,7 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
 }
 
 .log-chip label{
+  display:block;
   margin-bottom:4px;
   font-size:11px;
 }
@@ -375,6 +416,20 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   padding:7px 10px;
   border-radius:10px;
   font-size:13px;
+}
+
+.log-chip-reset{
+  flex:0 0 auto;
+  min-width:auto;
+  align-self:flex-end;
+}
+
+.log-group-header{
+  margin: 12px 2px 8px;
+  font-size:12px;
+  color:var(--muted);
+  text-transform:lowercase;
+  letter-spacing:.02em;
 }
 
 .item-compact{
