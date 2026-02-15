@@ -1914,6 +1914,26 @@ function ensureDefaultSettlementLines(settlement){
   ensureForBucket('cash');
 }
 
+
+function shouldBlockIOSGestures(){
+  const ua = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  const maxTouchPoints = navigator.maxTouchPoints || 0;
+  const isIOSDevice = /iPhone|iPad|iPod/.test(ua) || (/Mac/.test(platform) && maxTouchPoints > 1);
+  if (!isIOSDevice) return false;
+  const isSafariLike = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  const isStandalone = window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone === true;
+  return isSafariLike || isStandalone;
+}
+
+function installIOSNoZoomGuards(){
+  if (!shouldBlockIOSGestures()) return;
+  const blockGesture = (event) => event.preventDefault();
+  ["gesturestart", "gesturechange", "gestureend"].forEach((type)=>{
+    document.addEventListener(type, blockGesture, { passive: false });
+  });
+}
+
 // ---------- PWA register ----------
 if ("serviceWorker" in navigator){
   window.addEventListener("load", async ()=>{
@@ -1922,5 +1942,6 @@ if ("serviceWorker" in navigator){
 }
 
 // init
+installIOSNoZoomGuards();
 setTab("logs");
 render();
