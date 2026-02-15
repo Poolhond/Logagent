@@ -559,6 +559,30 @@ $("#btnBack").addEventListener("click", ()=> {
   else setTab("logs");
 });
 $("#btnSearch").addEventListener("click", ()=> alert("Zoeken komt later."));
+$("#btnNewLog").addEventListener("click", ()=> openSheet("new-log"));
+
+function startWorkLog(customerId){
+  if (!customerId) return;
+  if (state.activeLogId){
+    alert("Er is al een actieve werklog.");
+    return;
+  }
+  const log = {
+    id: uid(),
+    customerId,
+    date: todayISO(),
+    createdAt: now(),
+    closedAt: null,
+    note: "",
+    segments: [],
+    items: []
+  };
+  openSegment(log, "work");
+  state.logs.unshift(log);
+  state.activeLogId = log.id;
+  saveState();
+  closeSheet();
+}
 
 function openSheet(type, id){
   ui.sheet = { type, id };
@@ -589,8 +613,6 @@ function renderLogs(){
   const el = $("#tab-logs");
   const active = state.activeLogId ? state.logs.find(l => l.id === state.activeLogId) : null;
 
-  const customerOptions = state.customers.map(c => `<option value="${c.id}">${esc(c.nickname||c.name||"Klant")}</option>`).join("");
-
   const activeCard = active ? `
     <div class="card stack">
       <div class="row space">
@@ -609,19 +631,7 @@ function renderLogs(){
 
       <div class="small">Tip: producten voeg je toe via “Open”.</div>
     </div>
-  ` : `
-    <div class="card stack">
-      <div class="item-title">Nieuwe werklog</div>
-      <div class="row">
-        <div style="flex:1; min-width:220px;">
-          <label>Klant</label>
-          <select id="startCustomer">${customerOptions || `<option value="">(Geen klanten)</option>`}</select>
-        </div>
-      </div>
-      <button class="btn primary" id="btnStart" ${state.customers.length ? "" : "disabled"}>Start werk</button>
-      ${state.customers.length ? "" : `<div class="small">Maak eerst een klant aan.</div>`}
-    </div>
-  `;
+  ` : "";
 
   const logs = [...state.logs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0, 20);
   const list = logs.length ? logs.map(l=>{
@@ -643,26 +653,7 @@ function renderLogs(){
   el.innerHTML = `<div class="stack">${activeCard}<div class="card stack"><div class="item-title">Recente logs</div><div class="list">${list}</div></div></div>`;
 
   // actions
-  if (!active){
-    $("#btnStart")?.addEventListener("click", ()=>{
-      const cid = $("#startCustomer").value;
-      if (!cid) return;
-      const log = {
-        id: uid(),
-        customerId: cid,
-        date: todayISO(),
-        createdAt: now(),
-        closedAt: null,
-        note: "",
-        segments: [],
-        items: []
-      };
-      openSegment(log, "work");
-      state.logs.unshift(log);
-      state.activeLogId = log.id;
-      saveState(); render();
-    });
-  } else {
+  if (active){
     $("#btnPause")?.addEventListener("click", ()=>{
       const seg = currentOpenSegment(active);
       if (!seg) openSegment(active,"work");
@@ -912,6 +903,42 @@ function renderSheet(){
   if (type === "product") renderProductSheet(id);
   if (type === "log") renderLogSheet(id);
   if (type === "settlement") renderSettlementSheet(id);
+  if (type === "new-log") renderNewLogSheet();
+}
+
+function renderNewLogSheet(){
+  const active = state.activeLogId ? state.logs.find(l => l.id === state.activeLogId) : null;
+  const customerOptions = state.customers.map(c => `<option value="${c.id}">${esc(c.nickname||c.name||"Klant")}</option>`).join("");
+
+  $("#sheetTitle").textContent = "Nieuwe werklog";
+  $("#sheetBody").innerHTML = `
+    <div class="stack">
+      ${active ? `
+      <div class="card stack">
+        <div class="item-title">Actieve werklog</div>
+        <div class="small mono">${esc(cname(active.customerId))} • gestart ${fmtClock(active.createdAt)}</div>
+        <button class="btn" id="btnOpenActiveFromNew">Open actieve werklog</button>
+      </div>
+      ` : ""}
+      <div class="card stack">
+        <div>
+          <label>Klant</label>
+          <select id="startCustomer">${customerOptions || `<option value="">(Geen klanten)</option>`}</select>
+        </div>
+        <button class="btn primary" id="btnStartFromSheet" ${(state.customers.length && !active) ? "" : "disabled"}>Start werk</button>
+        ${state.customers.length ? "" : `<div class="small">Maak eerst een klant aan.</div>`}
+      </div>
+    </div>
+  `;
+
+  $("#btnStartFromSheet")?.addEventListener("click", ()=>{
+    const cid = $("#startCustomer")?.value;
+    startWorkLog(cid);
+  });
+  $("#btnOpenActiveFromNew")?.addEventListener("click", ()=>{
+    if (!active) return;
+    openSheet("log", active.id);
+  });
 }
 
 function renderCustomerSheet(id){
