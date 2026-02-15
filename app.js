@@ -1,4 +1,4 @@
-/* Tuinlog MVP — 4 boeken + detail sheets
+/* Tuinlog MVP — 5 boeken + detail sheets
    - Logboek: start/stop/pauze, items toevoegen
    - Afrekenboek: bundel logs, per regel Factuur/Cash dropdown
    - Klanten: detail toont logs + afrekeningen
@@ -64,7 +64,7 @@ function loadState(){
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw){
     const st = defaultState();
-    seedDemoWeek(st);
+    seedDemoMonths(st, { months: 3, force: false });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(st));
     return st;
   }
@@ -72,11 +72,20 @@ function loadState(){
 
   // migrations
   if (!st.settings) st.settings = { hourlyRate: 38, vatRate: 0.21 };
+  if (!("hourlyRate" in st.settings)) st.settings.hourlyRate = 38;
+  if (!("vatRate" in st.settings)) st.settings.vatRate = 0.21;
   if (!st.customers) st.customers = [];
   if (!st.products) st.products = [];
   if (!st.logs) st.logs = [];
   if (!st.settlements) st.settlements = [];
   if (!("activeLogId" in st)) st.activeLogId = null;
+
+  for (const c of st.customers){
+    if (!("demo" in c)) c.demo = false;
+  }
+  for (const p of st.products){
+    if (!("demo" in p)) p.demo = false;
+  }
 
   // settlement status default
   for (const s of st.settlements){
@@ -85,12 +94,14 @@ function loadState(){
     if (!s.logIds) s.logIds = [];
     if (!("invoicePaid" in s)) s.invoicePaid = false;
     if (!("cashPaid" in s)) s.cashPaid = false;
+    if (!("demo" in s)) s.demo = false;
   }
   // log fields
   for (const l of st.logs){
     if (!l.segments) l.segments = [];
     if (!l.items) l.items = [];
     if (!l.date) l.date = todayISO();
+    if (!("demo" in l)) l.demo = false;
   }
 
   return st;
@@ -98,50 +109,212 @@ function loadState(){
 
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
-const state = loadState();
+const DEMO = {
+  firstNames: ["Jan", "Els", "Koen", "Sofie", "Lotte", "Tom", "An", "Pieter", "Nina", "Wim", "Bram", "Fien", "Arne", "Joke", "Raf", "Mira", "Tine", "Milan"],
+  lastNames: ["Peeters", "Janssens", "Van den Broeck", "Wouters", "Claes", "Lambrechts", "Maes", "Vermeulen", "Hermans", "Goossens", "De Smet", "Schreurs"],
+  streets: ["Naamsesteenweg", "Tiensevest", "Diestsesteenweg", "Tervuursesteenweg", "Geldenaaksebaan", "Kapucijnenvoer", "Ridderstraat", "Brusselsestraat", "Parkstraat", "Molenstraat", "Blandenstraat"],
+  zones: ["Heverlee", "Kessel-Lo", "Wilsele", "Herent", "Leuven", "Wijgmaal", "Haasrode", "Bertem"],
+  nicknames: ["achtertuin", "voortuin", "haag", "gazons", "border", "moestuin", "terras", "oprit"],
+  products: [
+    { name:"Arbeid", unit:"uur", min:36, max:48, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Groenafval", unit:"keer", min:18, max:45, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Compost", unit:"zak", min:6, max:12, vatRate:0.06, defaultBucket:"invoice" },
+    { name:"Plantgoed", unit:"stuk", min:4, max:24, vatRate:0.06, defaultBucket:"invoice" },
+    { name:"Verplaatsing", unit:"keer", min:12, max:25, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Parkeren", unit:"keer", min:2, max:9, vatRate:0.21, defaultBucket:"cash" },
+    { name:"Container", unit:"keer", min:120, max:210, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Snoei-afvoer", unit:"keer", min:45, max:95, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Boomschors", unit:"zak", min:8, max:15, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Meststof", unit:"kg", min:3, max:8, vatRate:0.06, defaultBucket:"invoice" },
+    { name:"Klein materiaal", unit:"keer", min:8, max:28, vatRate:0.21, defaultBucket:"cash" },
+  ]
+};
 
-// ---------- Demo seed (week) ----------
-function seedDemoWeek(st){
-  if (st.logs.length) return;
-  const cids = st.customers.map(c => c.id);
-  const prodGroen = st.products.find(p => p.name === "Groenafval")?.id;
-  const prodPark = st.products.find(p => p.name === "Parkeren")?.id;
+function ri(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
+function rf(min, max){ return Math.random() * (max - min) + min; }
+function pick(arr){ return arr[ri(0, arr.length - 1)]; }
+function demoDateISO(daysBack){
+  const d = new Date();
+  d.setDate(d.getDate() - daysBack);
+  return d.toISOString().slice(0,10);
+}
 
-  for (let i=0;i<7;i++){
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dateISO = d.toISOString().slice(0,10);
-
-    const customerId = cids[i % cids.length];
-    const start = new Date(dateISO+"T08:30:00").getTime();
-    const end = new Date(dateISO+"T12:30:00").getTime();
-    const brS = new Date(dateISO+"T10:30:00").getTime();
-    const brE = new Date(dateISO+"T10:45:00").getTime();
-
-    const log = {
-      id: uid(),
-      customerId,
-      date: dateISO,
-      createdAt: start,
-      closedAt: end,
-      note: (i%3===0) ? "Haag + borders" : "",
-      segments: [
-        { id: uid(), type:"work", start, end: brS },
-        { id: uid(), type:"break", start: brS, end: brE },
-        { id: uid(), type:"work", start: brE, end }
-      ],
-      items: []
-    };
-
-    if (prodGroen && i%2===0){
-      log.items.push({ id: uid(), productId: prodGroen, qty: 1 + (i%3), unitPrice: 38, note:"" });
-    }
-    if (prodPark && i%4===0){
-      log.items.push({ id: uid(), productId: prodPark, qty: 1, unitPrice: 2.5, note:"" });
-    }
-    st.logs.unshift(log);
+function ensureStateSafetyAfterMutations(st){
+  const logIds = new Set(st.logs.map(l => l.id));
+  for (const s of st.settlements){
+    s.logIds = (s.logIds||[]).filter(id => logIds.has(id));
+  }
+  if (st.activeLogId && !logIds.has(st.activeLogId)) st.activeLogId = null;
+  if (ui.sheet.type){
+    if (ui.sheet.type === "log" && !logIds.has(ui.sheet.id)) closeSheet();
+    if (ui.sheet.type === "customer" && !st.customers.some(c => c.id === ui.sheet.id)) closeSheet();
+    if (ui.sheet.type === "product" && !st.products.some(p => p.id === ui.sheet.id)) closeSheet();
+    if (ui.sheet.type === "settlement" && !st.settlements.some(x => x.id === ui.sheet.id)) closeSheet();
   }
 }
+
+function seedDemoMonths(st, { months = 3, force = false } = {}){
+  if (!force && (st.logs||[]).length) return false;
+
+  const customerCount = ri(12, 25);
+  const productCount = ri(8, Math.min(15, DEMO.products.length));
+  const logCount = ri(40, 90);
+  const settlementCount = ri(15, 35);
+
+  const customers = [];
+  for (let i = 0; i < customerCount; i++){
+    const fn = pick(DEMO.firstNames);
+    const ln = pick(DEMO.lastNames);
+    const street = pick(DEMO.streets);
+    const zone = pick(DEMO.zones);
+    const nr = ri(1, 180);
+    const nick = `${ln.split(" ")[0]} ${pick(DEMO.nicknames)}`;
+    customers.push({
+      id: uid(),
+      nickname: nick,
+      name: `${fn} ${ln}`,
+      address: `${street} ${nr}, ${zone}, Leuven`,
+      createdAt: now() - ri(15, 90) * 86400000,
+      demo: true
+    });
+  }
+
+  const productDefs = [...DEMO.products].sort(() => Math.random() - 0.5).slice(0, productCount);
+  const products = productDefs.map(def => ({
+    id: uid(),
+    name: def.name,
+    unit: def.unit,
+    unitPrice: round2(rf(def.min, def.max)),
+    vatRate: def.vatRate,
+    defaultBucket: def.defaultBucket,
+    demo: true
+  }));
+
+  const logs = [];
+  for (let i = 0; i < logCount; i++){
+    const customer = pick(customers);
+    const daysBack = ri(0, months * 31 - 1);
+    const date = demoDateISO(daysBack);
+    const startHour = ri(7, 10);
+    const startMin = pick([0, 15, 30, 45]);
+    const firstDurMin = ri(90, 220);
+    const breakMin = Math.random() < 0.35 ? ri(10, 35) : 0;
+    const secondDurMin = Math.random() < 0.55 ? ri(60, 180) : 0;
+
+    const start = new Date(`${date}T${pad2(startHour)}:${pad2(startMin)}:00`).getTime();
+    const firstEnd = start + firstDurMin * 60000;
+    const breakEnd = firstEnd + breakMin * 60000;
+    const finalEnd = breakEnd + secondDurMin * 60000;
+
+    const segments = [{ id: uid(), type:"work", start, end: firstEnd }];
+    if (breakMin > 0) segments.push({ id: uid(), type:"break", start: firstEnd, end: breakEnd });
+    if (secondDurMin > 0) segments.push({ id: uid(), type:"work", start: breakEnd, end: finalEnd });
+
+    const items = [];
+    const itemCount = ri(0, 4);
+    for (let j = 0; j < itemCount; j++){
+      const pr = pick(products.filter(p => p.name !== "Arbeid"));
+      const qty = pr.unit === "keer" ? 1 : round2(rf(1, 4));
+      items.push({ id: uid(), productId: pr.id, qty, unitPrice: pr.unitPrice, note:"" });
+    }
+
+    logs.push({
+      id: uid(),
+      customerId: customer.id,
+      date,
+      createdAt: start,
+      closedAt: finalEnd,
+      note: Math.random() < 0.3 ? pick(["Onderhoud", "Snoeiwerk", "Border opgefrist", "Seizoensbeurt"]) : "",
+      segments,
+      items,
+      demo: true
+    });
+  }
+
+  logs.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+
+  const settlements = [];
+  const logsByCustomer = new Map();
+  for (const l of logs){
+    if (!logsByCustomer.has(l.customerId)) logsByCustomer.set(l.customerId, []);
+    logsByCustomer.get(l.customerId).push(l);
+  }
+  for (const arr of logsByCustomer.values()) arr.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+
+  const target = Math.min(settlementCount, Math.max(1, logs.length));
+  for (let i = 0; i < target; i++){
+    const cid = pick([...logsByCustomer.keys()]);
+    const pool = logsByCustomer.get(cid).filter(l => !l._used);
+    if (!pool.length) continue;
+    const take = pool.slice(0, ri(1, Math.min(6, pool.length)));
+    take.forEach(l => { l._used = true; });
+
+    const computed = computeSettlementFromLogs(cid, take.map(l => l.id));
+    const lines = [];
+    const labour = computed.lines.find(line => (line.description||"").toLowerCase() === "arbeid");
+    if (labour) lines.push(labour);
+    if (Math.random() < 0.65){
+      for (const li of computed.lines.filter(line => (line.description||"").toLowerCase() !== "arbeid").slice(0, 2)) lines.push(li);
+    }
+
+    const draft = Math.random() < 0.45;
+    const temp = {
+      id: uid(),
+      customerId: cid,
+      date: take[take.length - 1].date,
+      createdAt: take[take.length - 1].createdAt,
+      logIds: take.map(l => l.id),
+      lines,
+      status: draft ? "draft" : "calculated",
+      invoicePaid: false,
+      cashPaid: false,
+      demo: true
+    };
+
+    const totals = getSettlementTotals(temp);
+    const scenario = ri(0,2);
+    if (scenario === 0){
+      temp.lines = temp.lines.map(line => ({ ...line, bucket: "invoice" }));
+      temp.invoicePaid = Math.random() < 0.55;
+      temp.cashPaid = false;
+    } else if (scenario === 1){
+      temp.lines = temp.lines.map(line => ({ ...line, bucket: "cash" }));
+      temp.invoicePaid = false;
+      temp.cashPaid = Math.random() < 0.55;
+    } else {
+      temp.lines = temp.lines.map((line, idx) => ({ ...line, bucket: idx % 2 === 0 ? "invoice" : "cash" }));
+      const mixedTotals = getSettlementTotals(temp);
+      temp.invoicePaid = mixedTotals.invoiceTotal > 0 ? Math.random() < 0.55 : false;
+      temp.cashPaid = mixedTotals.cashTotal > 0 ? Math.random() < 0.55 : false;
+    }
+
+    const paid = isSettlementPaid(temp);
+    if (paid) temp.status = "calculated";
+
+    settlements.push(temp);
+  }
+
+  for (const l of logs) delete l._used;
+
+  st.customers = [...customers, ...st.customers];
+  st.products = [...products, ...st.products];
+  st.logs = [...logs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)), ...st.logs];
+  st.settlements = [...settlements.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)), ...st.settlements];
+  return true;
+}
+
+function clearDemoData(st){
+  const removedLogIds = new Set((st.logs||[]).filter(l => l.demo).map(l => l.id));
+  st.customers = (st.customers||[]).filter(c => !c.demo);
+  st.products = (st.products||[]).filter(p => !p.demo);
+  st.logs = (st.logs||[]).filter(l => !l.demo);
+  st.settlements = (st.settlements||[])
+    .filter(s => !s.demo)
+    .map(s => ({ ...s, logIds: (s.logIds||[]).filter(id => !removedLogIds.has(id)) }));
+  ensureStateSafetyAfterMutations(st);
+}
+
+const state = loadState();
 
 // ---------- Computations ----------
 function sumWorkMs(log){
@@ -314,21 +487,25 @@ function setTab(key){
   $("#tab-settlements").classList.toggle("hidden", key !== "settlements");
   $("#tab-customers").classList.toggle("hidden", key !== "customers");
   $("#tab-products").classList.toggle("hidden", key !== "products");
+  $("#tab-settings").classList.toggle("hidden", key !== "settings");
 
   $("#nav-logs").classList.toggle("active", key === "logs");
   $("#nav-settlements").classList.toggle("active", key === "settlements");
   $("#nav-customers").classList.toggle("active", key === "customers");
   $("#nav-products").classList.toggle("active", key === "products");
+  $("#nav-settings").classList.toggle("active", key === "settings");
 
   $("#nav-logs").setAttribute("aria-selected", String(key === "logs"));
   $("#nav-settlements").setAttribute("aria-selected", String(key === "settlements"));
   $("#nav-customers").setAttribute("aria-selected", String(key === "customers"));
   $("#nav-products").setAttribute("aria-selected", String(key === "products"));
+  $("#nav-settings").setAttribute("aria-selected", String(key === "settings"));
 
   const subtitle = key === "logs" ? "Logboek"
     : key === "settlements" ? "Afrekenboek"
     : key === "customers" ? "Klanten"
-    : "Producten";
+    : key === "products" ? "Producten"
+    : "Instellingen";
   $("#subTitle").textContent = subtitle;
 
   render();
@@ -338,6 +515,7 @@ $("#nav-logs").addEventListener("click", ()=>setTab("logs"));
 $("#nav-settlements").addEventListener("click", ()=>setTab("settlements"));
 $("#nav-customers").addEventListener("click", ()=>setTab("customers"));
 $("#nav-products").addEventListener("click", ()=>setTab("products"));
+$("#nav-settings").addEventListener("click", ()=>setTab("settings"));
 
 $("#btnBack").addEventListener("click", ()=> {
   if (ui.sheet.type) closeSheet();
@@ -366,6 +544,7 @@ function render(){
   if (ui.tab === "settlements") renderSettlements();
   if (ui.tab === "customers") renderCustomers();
   if (ui.tab === "products") renderProducts();
+  if (ui.tab === "settings") renderSettings();
   if (ui.sheet.type) renderSheet();
 }
 
@@ -538,6 +717,79 @@ function renderProducts(){
   el.querySelectorAll("[data-open-product]").forEach(x=>{
     x.addEventListener("click", ()=> openSheet("product", x.getAttribute("data-open-product")));
   });
+}
+
+function renderSettings(){
+  const el = $("#tab-settings");
+  const demoCounts = {
+    customers: state.customers.filter(c => c.demo).length,
+    products: state.products.filter(p => p.demo).length,
+    logs: state.logs.filter(l => l.demo).length,
+    settlements: state.settlements.filter(a => a.demo).length,
+  };
+
+  el.innerHTML = `
+    <div class="stack">
+      <div class="card stack">
+        <div class="item-title">Algemeen</div>
+        <div class="row">
+          <div style="flex:1; min-width:170px;">
+            <label>Uurtarief</label>
+            <input id="settingHourly" inputmode="decimal" value="${esc(String(state.settings.hourlyRate ?? 38))}" />
+          </div>
+          <div style="flex:1; min-width:170px;">
+            <label>BTW %</label>
+            <input id="settingVat" inputmode="decimal" value="${esc(String(round2(Number(state.settings.vatRate || 0) * 100)))}" />
+          </div>
+        </div>
+        <button class="btn primary" id="saveSettings">Opslaan</button>
+      </div>
+
+      <div class="card stack">
+        <div class="item-title">Demo data</div>
+        <div class="small mono">Demo records: klanten ${demoCounts.customers} • producten ${demoCounts.products} • logs ${demoCounts.logs} • afrekeningen ${demoCounts.settlements}</div>
+        <button class="btn" id="fillDemoBtn">Vul demo data (3 maanden)</button>
+        <button class="btn danger" id="clearDemoBtn">Wis demo data</button>
+      </div>
+
+      <div class="card stack">
+        <div class="item-title">Geavanceerd</div>
+        <button class="btn danger" id="resetAllBtn">Reset alles</button>
+      </div>
+    </div>
+  `;
+
+  $("#saveSettings").onclick = ()=>{
+    const hourly = Number(String($("#settingHourly").value).replace(",", ".") || "0");
+    const vatPct = Number(String($("#settingVat").value).replace(",", ".") || "0");
+    state.settings.hourlyRate = round2(hourly);
+    state.settings.vatRate = round2(vatPct / 100);
+    saveState();
+    alert("Instellingen opgeslagen.");
+    render();
+  };
+
+  $("#fillDemoBtn").onclick = ()=>{
+    if (!confirmAction("Demo data toevoegen voor 3 maanden?")) return;
+    const changed = seedDemoMonths(state, { months: 3, force: true });
+    if (changed){
+      saveState();
+      render();
+    }
+  };
+
+  $("#clearDemoBtn").onclick = ()=>{
+    if (!confirmAction("Alle demo records wissen? Echte data blijft behouden.")) return;
+    clearDemoData(state);
+    saveState();
+    render();
+  };
+
+  $("#resetAllBtn").onclick = ()=>{
+    if (!confirmAction("Reset alles? Dit wist alle lokale data.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    location.reload();
+  };
 }
 
 function renderSettlements(){
@@ -1158,7 +1410,7 @@ function renderSettlementSheet(id){
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Factuur</div>
-          <span class="pill ${pay.hasInvoice && s.invoicePaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.invoiceTotal)}</span>
+          ${pay.hasInvoice ? `<span class="pill ${s.invoicePaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.invoiceTotal)}</span>` : ""}
         </div>
         <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw 21% ${fmtMoney(invT.vat)}</div>
         <div class="list">
@@ -1173,7 +1425,7 @@ function renderSettlementSheet(id){
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Cash</div>
-          <span class="pill ${pay.hasCash && s.cashPaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.cashTotal)}</span>
+          ${pay.hasCash ? `<span class="pill ${s.cashPaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.cashTotal)}</span>` : ""}
         </div>
         <div class="small mono">Cash zonder btw.</div>
         <div class="list">
