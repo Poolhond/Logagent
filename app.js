@@ -49,15 +49,27 @@ function defaultState(){
       { id: uid(), nickname:"Kessel-Lo tuin", name:"", address:"Kessel-Lo, Leuven", createdAt: now() },
     ],
     products: [
-      { id: uid(), name:"Arbeid", unit:"uur", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
-      { id: uid(), name:"Groenafval", unit:"keer", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
-      { id: uid(), name:"Parkeren", unit:"keer", unitPrice:0, vatRate:0.21, defaultBucket:"invoice" },
-      { id: uid(), name:"Materiaal", unit:"keer", unitPrice:0, vatRate:0.21, defaultBucket:"invoice" },
+      { id: uid(), name:"Werk", unit:"uur", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
+      { id: uid(), name:"Groen", unit:"keer", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
     ],
     logs: [],
     settlements: [],
     activeLogId: null
   };
+}
+
+function ensureCoreProducts(st){
+  st.products = st.products || [];
+  const coreProducts = [
+    { name:"Werk", unit:"uur", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
+    { name:"Groen", unit:"keer", unitPrice:38, vatRate:0.21, defaultBucket:"invoice" },
+  ];
+  for (const core of coreProducts){
+    const exists = st.products.find(p => (p.name||"").trim().toLowerCase() === core.name.toLowerCase());
+    if (!exists){
+      st.products.push({ id: uid(), ...core });
+    }
+  }
 }
 
 function loadState(){
@@ -87,6 +99,8 @@ function loadState(){
     if (!("demo" in p)) p.demo = false;
   }
 
+  ensureCoreProducts(st);
+
   // settlement status default
   for (const s of st.settlements){
     if (!s.status) s.status = "draft";
@@ -114,20 +128,7 @@ const DEMO = {
   lastNames: ["Peeters", "Janssens", "Van den Broeck", "Wouters", "Claes", "Lambrechts", "Maes", "Vermeulen", "Hermans", "Goossens", "De Smet", "Schreurs"],
   streets: ["Naamsesteenweg", "Tiensevest", "Diestsesteenweg", "Tervuursesteenweg", "Geldenaaksebaan", "Kapucijnenvoer", "Ridderstraat", "Brusselsestraat", "Parkstraat", "Molenstraat", "Blandenstraat"],
   zones: ["Heverlee", "Kessel-Lo", "Wilsele", "Herent", "Leuven", "Wijgmaal", "Haasrode", "Bertem"],
-  nicknames: ["achtertuin", "voortuin", "haag", "gazons", "border", "moestuin", "terras", "oprit"],
-  products: [
-    { name:"Arbeid", unit:"uur", min:36, max:48, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Groenafval", unit:"keer", min:18, max:45, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Compost", unit:"zak", min:6, max:12, vatRate:0.06, defaultBucket:"invoice" },
-    { name:"Plantgoed", unit:"stuk", min:4, max:24, vatRate:0.06, defaultBucket:"invoice" },
-    { name:"Verplaatsing", unit:"keer", min:12, max:25, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Parkeren", unit:"keer", min:2, max:9, vatRate:0.21, defaultBucket:"cash" },
-    { name:"Container", unit:"keer", min:120, max:210, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Snoei-afvoer", unit:"keer", min:45, max:95, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Boomschors", unit:"zak", min:8, max:15, vatRate:0.21, defaultBucket:"invoice" },
-    { name:"Meststof", unit:"kg", min:3, max:8, vatRate:0.06, defaultBucket:"invoice" },
-    { name:"Klein materiaal", unit:"keer", min:8, max:28, vatRate:0.21, defaultBucket:"cash" },
-  ]
+  nicknames: ["achtertuin", "voortuin", "haag", "gazons", "border", "moestuin", "terras", "oprit"]
 };
 
 function ri(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -153,11 +154,21 @@ function ensureStateSafetyAfterMutations(st){
   }
 }
 
+function settlementTotals(settlement){
+  return getSettlementTotals(settlement);
+}
+
 function seedDemoMonths(st, { months = 3, force = false } = {}){
-  if (!force && (st.logs||[]).length) return false;
+  const hasDemo = (st.customers||[]).some(c => c.demo) || (st.logs||[]).some(l => l.demo) || (st.settlements||[]).some(s => s.demo);
+  if (!force && hasDemo) return false;
+
+  ensureCoreProducts(st);
+
+  const workProduct = st.products.find(p => (p.name||"").trim().toLowerCase() === "werk");
+  const greenProduct = st.products.find(p => (p.name||"").trim().toLowerCase() === "groen");
+  if (!workProduct || !greenProduct) return false;
 
   const customerCount = ri(12, 25);
-  const productCount = ri(8, Math.min(15, DEMO.products.length));
   const logCount = ri(40, 90);
   const settlementCount = ri(15, 35);
 
@@ -179,17 +190,6 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
     });
   }
 
-  const productDefs = [...DEMO.products].sort(() => Math.random() - 0.5).slice(0, productCount);
-  const products = productDefs.map(def => ({
-    id: uid(),
-    name: def.name,
-    unit: def.unit,
-    unitPrice: round2(rf(def.min, def.max)),
-    vatRate: def.vatRate,
-    defaultBucket: def.defaultBucket,
-    demo: true
-  }));
-
   const logs = [];
   for (let i = 0; i < logCount; i++){
     const customer = pick(customers);
@@ -210,13 +210,12 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
     if (breakMin > 0) segments.push({ id: uid(), type:"break", start: firstEnd, end: breakEnd });
     if (secondDurMin > 0) segments.push({ id: uid(), type:"work", start: breakEnd, end: finalEnd });
 
-    const items = [];
-    const itemCount = ri(0, 4);
-    for (let j = 0; j < itemCount; j++){
-      const pr = pick(products.filter(p => p.name !== "Arbeid"));
-      const qty = pr.unit === "keer" ? 1 : round2(rf(1, 4));
-      items.push({ id: uid(), productId: pr.id, qty, unitPrice: pr.unitPrice, note:"" });
-    }
+    const workHours = round2(sumWorkMs({ segments }) / 3600000);
+    const greenQty = ri(0, 3);
+    const items = [
+      { id: uid(), productId: workProduct.id, qty: workHours, unitPrice: 38, note:"" },
+      { id: uid(), productId: greenProduct.id, qty: greenQty, unitPrice: 38, note:"" }
+    ];
 
     logs.push({
       id: uid(),
@@ -249,15 +248,44 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
     const take = pool.slice(0, ri(1, Math.min(6, pool.length)));
     take.forEach(l => { l._used = true; });
 
-    const computed = computeSettlementFromLogsInState(st, cid, take.map(l => l.id));
+    const summary = { workQty: 0, greenQty: 0 };
+    for (const log of take){
+      for (const it of (log.items||[])){
+        if (it.productId === workProduct.id) summary.workQty += Number(it.qty)||0;
+        if (it.productId === greenProduct.id) summary.greenQty += Number(it.qty)||0;
+      }
+    }
+    summary.workQty = round2(summary.workQty);
+    summary.greenQty = round2(summary.greenQty);
+
+    const scenarioPick = Math.random();
+    const scenario = scenarioPick < 0.35 ? "invoice" : (scenarioPick < 0.70 ? "cash" : "mixed");
     const lines = [];
-    const labour = computed.lines.find(line => (line.description||"").toLowerCase() === "arbeid");
-    if (labour) lines.push(labour);
-    if (Math.random() < 0.65){
-      for (const li of computed.lines.filter(line => (line.description||"").toLowerCase() !== "arbeid").slice(0, 2)) lines.push(li);
+    const pushLine = ({ bucket, productId, description, unit, qty, unitPrice, vatRate })=>{
+      const nQty = round2(Number(qty)||0);
+      if (nQty <= 0) return;
+      lines.push({ id: uid(), bucket, productId, description, unit, qty: nQty, unitPrice, vatRate });
+    };
+
+    if (scenario === "invoice"){
+      pushLine({ bucket:"invoice", productId: workProduct.id, description:"Werk", unit:"uur", qty: summary.workQty, unitPrice:38, vatRate:0.21 });
+      pushLine({ bucket:"invoice", productId: greenProduct.id, description:"Groen", unit:"keer", qty: summary.greenQty, unitPrice:38, vatRate:0.21 });
+    } else if (scenario === "cash"){
+      pushLine({ bucket:"cash", productId: workProduct.id, description:"Werk", unit:"uur", qty: summary.workQty, unitPrice:38, vatRate:0 });
+      pushLine({ bucket:"cash", productId: greenProduct.id, description:"Groen", unit:"keer", qty: summary.greenQty, unitPrice:38, vatRate:0 });
+    } else {
+      const invoiceWorkQty = round2(Math.max(0.5, summary.workQty * rf(0.45, 0.75)));
+      const cashWorkQty = round2(Math.max(0.5, summary.workQty - invoiceWorkQty));
+      const invoiceGreenQty = Math.floor(summary.greenQty / 2);
+      const cashGreenQty = Math.max(0, Math.round(summary.greenQty - invoiceGreenQty));
+      pushLine({ bucket:"invoice", productId: workProduct.id, description:"Werk", unit:"uur", qty: invoiceWorkQty, unitPrice:38, vatRate:0.21 });
+      pushLine({ bucket:"cash", productId: workProduct.id, description:"Werk", unit:"uur", qty: cashWorkQty, unitPrice:38, vatRate:0 });
+      pushLine({ bucket:"invoice", productId: greenProduct.id, description:"Groen", unit:"keer", qty: invoiceGreenQty, unitPrice:38, vatRate:0.21 });
+      pushLine({ bucket:"cash", productId: greenProduct.id, description:"Groen", unit:"keer", qty: cashGreenQty, unitPrice:38, vatRate:0 });
     }
 
-    const draft = Math.random() < 0.45;
+    const statusPick = Math.random();
+    const status = statusPick < 0.30 ? "draft" : "calculated";
     const temp = {
       id: uid(),
       customerId: cid,
@@ -265,27 +293,25 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
       createdAt: take[take.length - 1].createdAt,
       logIds: take.map(l => l.id),
       lines,
-      status: draft ? "draft" : "calculated",
+      status,
       invoicePaid: false,
       cashPaid: false,
       demo: true
     };
 
-    const totals = getSettlementTotals(temp);
-    const scenario = ri(0,2);
-    if (scenario === 0){
-      temp.lines = temp.lines.map(line => ({ ...line, bucket: "invoice" }));
-      temp.invoicePaid = Math.random() < 0.55;
-      temp.cashPaid = false;
-    } else if (scenario === 1){
-      temp.lines = temp.lines.map(line => ({ ...line, bucket: "cash" }));
-      temp.invoicePaid = false;
-      temp.cashPaid = Math.random() < 0.55;
+    const totals = settlementTotals(temp);
+    if (statusPick >= 0.70){
+      if (totals.invoiceTotal > 0 && totals.cashTotal > 0){
+        temp.invoicePaid = true;
+        temp.cashPaid = true;
+      } else if (totals.invoiceTotal > 0){
+        temp.invoicePaid = true;
+      } else if (totals.cashTotal > 0){
+        temp.cashPaid = true;
+      }
     } else {
-      temp.lines = temp.lines.map((line, idx) => ({ ...line, bucket: idx % 2 === 0 ? "invoice" : "cash" }));
-      const mixedTotals = getSettlementTotals(temp);
-      temp.invoicePaid = mixedTotals.invoiceTotal > 0 ? Math.random() < 0.55 : false;
-      temp.cashPaid = mixedTotals.cashTotal > 0 ? Math.random() < 0.55 : false;
+      temp.invoicePaid = totals.invoiceTotal > 0 ? Math.random() < 0.5 : false;
+      temp.cashPaid = totals.cashTotal > 0 ? Math.random() < 0.5 : false;
     }
 
     const paid = isSettlementPaid(temp);
@@ -297,7 +323,6 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
   for (const l of logs) delete l._used;
 
   st.customers = [...customers, ...st.customers];
-  st.products = [...products, ...st.products];
   st.logs = [...logs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)), ...st.logs];
   st.settlements = [...settlements.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)), ...st.settlements];
   return true;
@@ -306,7 +331,6 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
 function clearDemoData(st){
   const removedLogIds = new Set((st.logs||[]).filter(l => l.demo).map(l => l.id));
   st.customers = (st.customers||[]).filter(c => !c.demo);
-  st.products = (st.products||[]).filter(p => !p.demo);
   st.logs = (st.logs||[]).filter(l => !l.demo);
   st.settlements = (st.settlements||[])
     .filter(s => !s.demo)
@@ -445,12 +469,15 @@ function computeSettlementFromLogsInState(sourceState, customerId, logIds){
 
   // build lines: labour + grouped items
   const lines = [];
-  const labourProduct = sourceState.products.find(p => p.name.toLowerCase() === "arbeid");
+  const labourProduct = sourceState.products.find(p => {
+    const n = (p.name||"").toLowerCase();
+    return n === "werk" || n === "arbeid";
+  });
   if (hours > 0){
     lines.push({
       id: uid(),
       productId: labourProduct?.id || null,
-      description: labourProduct?.name || "Arbeid",
+      description: labourProduct?.name || "Werk",
       unit: labourProduct?.unit || "uur",
       qty: hours,
       unitPrice: Number(sourceState.settings.hourlyRate||38),
@@ -727,7 +754,6 @@ function renderSettings(){
   const el = $("#tab-settings");
   const demoCounts = {
     customers: state.customers.filter(c => c.demo).length,
-    products: state.products.filter(p => p.demo).length,
     logs: state.logs.filter(l => l.demo).length,
     settlements: state.settlements.filter(a => a.demo).length,
   };
@@ -751,7 +777,7 @@ function renderSettings(){
 
       <div class="card stack">
         <div class="item-title">Demo data</div>
-        <div class="small mono">Demo records: klanten ${demoCounts.customers} • producten ${demoCounts.products} • logs ${demoCounts.logs} • afrekeningen ${demoCounts.settlements}</div>
+        <div class="small mono">Demo records: klanten ${demoCounts.customers} • logs ${demoCounts.logs} • afrekeningen ${demoCounts.settlements}</div>
         <button class="btn" id="fillDemoBtn">Vul demo data (3 maanden)</button>
         <button class="btn danger" id="clearDemoBtn">Wis demo data</button>
       </div>
@@ -775,16 +801,24 @@ function renderSettings(){
 
   $("#fillDemoBtn").onclick = ()=>{
     if (!confirmAction("Demo data toevoegen voor 3 maanden?")) return;
-    const changed = seedDemoMonths(state, { months: 3, force: true });
+    const changed = seedDemoMonths(state, { months: 3, force: false });
     if (changed){
       saveState();
       render();
+    } else {
+      alert("Demo data bestaat al. Wis eerst demo data om opnieuw te seeden.");
     }
   };
 
   $("#clearDemoBtn").onclick = ()=>{
+    const demoRecordCount = state.customers.filter(c => c.demo).length + state.logs.filter(l => l.demo).length + state.settlements.filter(s => s.demo).length;
+    if (!demoRecordCount){
+      alert("Geen demo data om te wissen.");
+      return;
+    }
     if (!confirmAction("Alle demo records wissen? Echte data blijft behouden.")) return;
     clearDemoData(state);
+    closeSheet();
     saveState();
     render();
   };
