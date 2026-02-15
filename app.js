@@ -424,6 +424,13 @@ function statusClassFromStatus(s){
   if (s === "paid") return "status-paid";
   return "";
 }
+function getLogVisualState(log){
+  const state = logStatus(log.id);
+  if (state === "paid") return { state: "paid", color: "#00a05a" };
+  if (state === "calculated") return { state: "calculated", color: "#ff8c00" };
+  if (state === "linked") return { state: "linked", color: "#ffcc00" };
+  return { state: "free", color: "#93a0b5" };
+}
 function getSettlementTotals(settlement){
   const invoiceTotals = bucketTotals(settlement.lines, "invoice");
   const cashTotals = bucketTotals(settlement.lines, "cash");
@@ -655,7 +662,27 @@ function viewTitle(viewState){
 
 function renderTopbar(){
   const active = currentView();
-  $("#topbarTitle").textContent = viewTitle(active);
+  const topbar = document.querySelector(".topbar");
+  const subtitleEl = $("#topbarSubtitle");
+  topbar.classList.remove("nav--free", "nav--linked", "nav--calculated", "nav--paid");
+  subtitleEl.classList.add("hidden");
+  subtitleEl.textContent = "";
+
+  if (active.view === "logDetail"){
+    const log = state.logs.find(x => x.id === active.id);
+    if (log){
+      const visual = getLogVisualState(log);
+      topbar.classList.add(`nav--${visual.state}`);
+      $("#topbarTitle").textContent = cname(log.customerId);
+      subtitleEl.textContent = formatLogDatePretty(log.date);
+      subtitleEl.classList.remove("hidden");
+    } else {
+      $("#topbarTitle").textContent = viewTitle(active);
+    }
+  } else {
+    $("#topbarTitle").textContent = viewTitle(active);
+  }
+
   const showBack = ui.navStack.length > 1;
   $("#btnBack").classList.toggle("hidden", !showBack);
 }
@@ -1420,52 +1447,28 @@ function renderLogSheet(id){
   $("#sheetTitle").textContent = "Werklog";
   const af = settlementForLog(log.id);
   const locked = false;
-
-  $("#sheetActions").innerHTML = `
-    <button class="btn danger" id="delLog">Verwijder</button>
-  `;
+  $("#sheetActions").innerHTML = "";
 
   const settlementOptions = buildSettlementSelectOptions(log.customerId, af?.id);
 
-  const status = logStatus(log.id);
-  const statusClass = statusClassFromStatus(status);
-  const statusPillClass = status === "paid" ? "pill-paid" : status === "calculated" ? "pill-calc" : status === "linked" ? "pill-open" : "pill-neutral";
-  const statusLabel = status === "free" ? "vrij" : status === "linked" ? "gekoppeld" : status === "calculated" ? "berekend" : "betaald";
+  const visual = getLogVisualState(log);
+  const statusPillClass = visual.state === "paid" ? "pill-paid" : visual.state === "calculated" ? "pill-calc" : visual.state === "linked" ? "pill-open" : "pill-neutral";
+  const statusLabel = visual.state === "free" ? "vrij" : visual.state === "linked" ? "gekoppeld" : visual.state === "calculated" ? "berekend" : "betaald";
   const isEditing = state.ui.editLogId === log.id;
-
-  function renderContentHeader(currentLog){
-    return `
-      <section class="compact-section log-detail-header ${statusClass}">
-        <div class="log-detail-header-top">
-          <div>
-            <h1 class="log-h1">${esc(cname(currentLog.customerId))}</h1>
-            ${isEditing
-              ? `<input class="log-date-input mono" id="logDate" type="date" value="${esc(currentLog.date || todayISO())}" />`
-              : `<div class="small mono muted">${esc(formatLogDatePretty(currentLog.date))}</div>`}
-          </div>
-          <div class="log-header-actions">
-            ${isEditing
-              ? `<button class="iconbtn iconbtn-sm" id="doneEditLog" type="button" title="Gereed" aria-label="Gereed">
-                   <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12l5 5 9-9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                 </button>`
-              : `<button class="iconbtn iconbtn-sm" id="editLog" type="button" title="Bewerk" aria-label="Bewerk">
-                   <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 20h9" stroke-linecap="round"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linejoin="round"/></svg>
-                 </button>`}
-          </div>
-        </div>
-        <div class="row">
-          <span class="pill ${statusPillClass}">${statusLabel}</span>
-        </div>
-      </section>
-    `;
-  }
 
   function renderSegments(currentLog, editing){
     return `
       <section class="compact-section stack">
         <div class="row space">
           <div class="item-title">Segments</div>
-          ${editing ? `<button class="btn" id="addSegment" type="button">+ segment</button>` : ""}
+          <div class="rowtight">
+            <button class="iconbtn iconbtn-sm" id="toggleEditLog" type="button" title="${editing ? "Klaar" : "Bewerk"}" aria-label="${editing ? "Klaar" : "Bewerk"}">
+              ${editing
+                ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12l5 5 9-9" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+                : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 20h9" stroke-linecap="round"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linejoin="round"/></svg>`}
+            </button>
+            ${editing ? `<button class="btn" id="addSegment" type="button">+ segment</button>` : ""}
+          </div>
         </div>
         <div class="compact-lines">
           ${(currentLog.segments||[]).map(s=>{
@@ -1505,8 +1508,6 @@ function renderLogSheet(id){
 
   $("#sheetBody").innerHTML = `
     <div class="stack log-detail-compact">
-      ${renderContentHeader(log)}
-
       <section class="compact-section compact-row">
         <label>Afrekening</label>
         <select id="logSettlement" ${locked ? "disabled" : ""}>
@@ -1530,6 +1531,11 @@ function renderLogSheet(id){
         <label>Notitie</label>
         <input id="logNote" value="${esc(log.note||"")}" />
       </section>
+
+      <section class="compact-section log-detail-footer-actions">
+        <span class="pill ${statusPillClass}">${statusLabel}</span>
+        <button class="btn danger" id="delLog">Verwijder</button>
+      </section>
     </div>
   `;
 
@@ -1540,17 +1546,7 @@ function renderLogSheet(id){
     render();
   });
 
-  $("#editLog")?.addEventListener("click", ()=> toggleEditLog(log.id));
-  $("#doneEditLog")?.addEventListener("click", ()=> toggleEditLog(log.id));
-
-  $("#logDate")?.addEventListener("change", ()=>{
-    const nextDate = ($("#logDate").value||"").trim();
-    if (!nextDate) return;
-    log.date = nextDate;
-    saveState();
-    renderSheet();
-    render();
-  });
+  $("#toggleEditLog")?.addEventListener("click", ()=> toggleEditLog(log.id));
 
   $("#addSegment")?.addEventListener("click", ()=>{
     log.segments = log.segments || [];
