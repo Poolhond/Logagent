@@ -189,13 +189,34 @@ function statusClassFromStatus(s){
   if (s === "paid") return "status-paid";
   return "";
 }
+function getSettlementTotals(settlement){
+  const invoiceTotals = bucketTotals(settlement.lines, "invoice");
+  const cashTotals = bucketTotals(settlement.lines, "cash");
+  return {
+    invoiceTotal: invoiceTotals.total,
+    cashTotal: cashTotals.subtotal
+  };
+}
+function isSettlementPaid(settlement){
+  const { invoiceTotal, cashTotal } = getSettlementTotals(settlement);
+  const hasInvoice = invoiceTotal > 0;
+  const hasCash = cashTotal > 0;
+  return (!hasInvoice || settlement.invoicePaid)
+    && (!hasCash || settlement.cashPaid)
+    && (hasInvoice || hasCash);
+}
+function settlementColorClass(settlement){
+  if (isSettlementPaid(settlement)) return "status-paid";
+  if (settlement.status === "calculated") return "status-calculated";
+  return "status-linked";
+}
 function settlementForLog(logId){
   return state.settlements.find(a => (a.logIds||[]).includes(logId)) || null;
 }
 function getWorkLogStatus(logId){
   const af = settlementForLog(logId);
   if (!af) return "free";
-  if (settlementPaymentState(af).isPaid) return "paid";
+  if (settlementColorClass(af) === "status-paid") return "paid";
   if (af.status === "calculated") return "calculated";
   return "linked";
 }
@@ -225,13 +246,10 @@ function bucketTotals(lines, bucket){
 function settlementPaymentState(settlement){
   const invoiceTotals = bucketTotals(settlement.lines, "invoice");
   const cashTotals = bucketTotals(settlement.lines, "cash");
-  const invoiceTotal = invoiceTotals.total;
-  const cashTotal = cashTotals.subtotal;
+  const { invoiceTotal, cashTotal } = getSettlementTotals(settlement);
   const hasInvoice = invoiceTotal > 0;
   const hasCash = cashTotal > 0;
-  const isPaid = (!hasInvoice || settlement.invoicePaid)
-    && (!hasCash || settlement.cashPaid)
-    && (hasInvoice || hasCash);
+  const isPaid = isSettlementPaid(settlement);
   return { invoiceTotals, cashTotals, invoiceTotal, cashTotal, hasInvoice, hasCash, isPaid };
 }
 
@@ -526,8 +544,7 @@ function renderSettlements(){
   const el = $("#tab-settlements");
   const list = [...state.settlements].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(s=>{
     const pay = settlementPaymentState(s);
-    const rowStatus = pay.isPaid ? "paid" : (s.status === "calculated" ? "calculated" : "draft");
-    const cls = statusClassFromStatus(rowStatus);
+    const cls = settlementColorClass(s);
     const grand = round2(pay.invoiceTotal + pay.cashTotal);
     const invoicePillClass = s.invoicePaid ? "pill-paid" : "pill-open";
     const cashPillClass = s.cashPaid ? "pill-paid" : "pill-open";
@@ -656,17 +673,19 @@ function renderCustomerSheet(id){
         <div class="item-title">Afrekeningen</div>
         <div class="list">
           ${settlements.slice(0,20).map(s=>{
-            const cls = statusClassFromStatus(s.status);
+            const paid = isSettlementPaid(s);
+            const cls = settlementColorClass(s);
             const totInv = bucketTotals(s.lines,"invoice");
             const totCash = bucketTotals(s.lines,"cash");
             const grand = round2(totInv.total + totCash.subtotal);
+            const label = paid ? "betaald" : (s.status === "calculated" ? "berekend" : "draft/open");
             return `
               <div class="item ${cls}" data-open-settlement="${s.id}">
                 <div class="item-main">
-                  <div class="item-title">${esc(s.date)} • ${statusLabelNL(s.status)}</div>
+                  <div class="item-title">${esc(s.date)} • ${label}</div>
                   <div class="item-sub mono">logs ${(s.logIds||[]).length} • totaal ${fmtMoney(grand)}</div>
                 </div>
-                <div class="item-right"><span class="badge">open</span></div>
+                <div class="item-right"><span class="badge">${label}</span></div>
               </div>
             `;
           }).join("") || `<div class="small">Geen afrekeningen.</div>`}
