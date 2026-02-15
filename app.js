@@ -31,6 +31,38 @@ function durMsToHM(ms){
   const mm = m%60;
   return `${h}u ${pad2(mm)}m`;
 }
+function calculateDuration(start, end) {
+  const [sh, sm] = String(start || "").split(":").map(Number);
+  const [eh, em] = String(end || "").split(":").map(Number);
+
+  if (![sh, sm, eh, em].every(Number.isFinite)) return "0u 00m";
+
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  const diff = Math.max(0, endMin - startMin);
+
+  const hours = Math.floor(diff / 60);
+  const minutes = diff % 60;
+
+  return `${hours}u ${minutes.toString().padStart(2, "0")}m`;
+}
+function getSegmentMinutes(segment){
+  const start = fmtTimeInput(segment?.start);
+  const end = fmtTimeInput(segment?.end);
+  if (!start || !end) return 0;
+
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  if (![sh, sm, eh, em].every(Number.isFinite)) return 0;
+
+  return Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+}
+function formatMinutesAsDuration(totalMinutes){
+  const minutes = Math.max(0, Math.floor(Number(totalMinutes) || 0));
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}u ${String(m).padStart(2, "0")}m`;
+}
 function round2(n){ return Math.round((Number(n||0))*100)/100; }
 function formatLogDatePretty(isoDate){
   if (!isoDate) return "";
@@ -1457,10 +1489,21 @@ function renderLogSheet(id){
   const isEditing = state.ui.editLogId === log.id;
 
   function renderSegments(currentLog, editing){
+    const segments = currentLog.segments || [];
+    const totalWorkMinutes = segments
+      .filter(s => s.type === "work")
+      .reduce((sum, s) => sum + getSegmentMinutes(s), 0);
+    const totalBreakMinutes = segments
+      .filter(s => s.type === "break")
+      .reduce((sum, s) => sum + getSegmentMinutes(s), 0);
+
     return `
       <section class="compact-section stack">
         <div class="row space">
-          <div class="item-title">Segments</div>
+          <div>
+            <div class="item-title">Totale werktijd</div>
+            <div class="small mono muted">Werk ${formatMinutesAsDuration(totalWorkMinutes)} • Pauze ${formatMinutesAsDuration(totalBreakMinutes)}</div>
+          </div>
           <div class="rowtight">
             <button class="iconbtn iconbtn-sm" id="toggleEditLog" type="button" title="${editing ? "Klaar" : "Bewerk"}" aria-label="${editing ? "Klaar" : "Bewerk"}">
               ${editing
@@ -1471,15 +1514,18 @@ function renderLogSheet(id){
           </div>
         </div>
         <div class="compact-lines">
-          ${(currentLog.segments||[]).map(s=>{
+          ${segments.map(s=>{
+            const start = s.start ? fmtClock(s.start) : "…";
+            const end = s.end ? fmtClock(s.end) : "…";
+            const segmentDuration = calculateDuration(start, end);
             if (!editing){
-              return `<div class="segment-row segment-row-static mono">${s.type === "break" ? "Pauze" : "Werk"} ${s.start ? fmtClock(s.start) : "…"}–${s.end ? fmtClock(s.end) : "…"}</div>`;
+              return `<div class="segment-row segment-row-static mono"><div class="segment-row-main"><span>${s.type === "break" ? "Pauze" : "Werk"} ${start}–${end}</span><span class="segment-duration">${segmentDuration}</span></div></div>`;
             }
             const isOpen = ui.logDetailSegmentEditId === s.id;
             return `
               <div class="segment-row ${isOpen ? "is-open" : ""}">
                 <button class="segment-row-btn mono" type="button" data-toggle-segment="${s.id}">
-                  ${s.type === "break" ? "Pauze" : "Werk"} ${s.start ? fmtClock(s.start) : "…"}–${s.end ? fmtClock(s.end) : "…"}
+                  <span class="segment-row-main"><span>${s.type === "break" ? "Pauze" : "Werk"} ${start}–${end}</span><span class="segment-duration">${segmentDuration}</span></span>
                 </button>
                 ${isOpen ? `
                   <div class="segment-editor" data-segment-editor="${s.id}">
@@ -1500,7 +1546,7 @@ function renderLogSheet(id){
                 ` : ""}
               </div>
             `;
-          }).join("") || `<div class="small">Geen segments.</div>`}
+          }).join("") || `<div class="small">Geen segmenten.</div>`}
         </div>
       </section>
     `;
