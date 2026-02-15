@@ -83,8 +83,8 @@ function loadState(){
     if (!s.status) s.status = "draft";
     if (!s.lines) s.lines = [];
     if (!s.logIds) s.logIds = [];
-    if (!s.invoiceStatus) s.invoiceStatus = "open";
-    if (!s.cashStatus) s.cashStatus = "open";
+    if (!("invoicePaid" in s)) s.invoicePaid = false;
+    if (!("cashPaid" in s)) s.cashPaid = false;
   }
   // log fields
   for (const l of st.logs){
@@ -195,8 +195,9 @@ function settlementForLog(logId){
 function getWorkLogStatus(logId){
   const af = settlementForLog(logId);
   if (!af) return "free";
-  if (af.invoiceStatus === "paid" && af.cashStatus === "paid") return "paid";
-  return "calculated";
+  if (settlementPaymentState(af).isPaid) return "paid";
+  if (af.status === "calculated") return "calculated";
+  return "linked";
 }
 function statusLabelNL(s){
   if (s === "draft") return "draft";
@@ -219,6 +220,19 @@ function bucketTotals(lines, bucket){
   const vat = round2(arr.reduce((a,l)=> a + lineVat(l), 0));
   const total = round2(subtotal + vat);
   return { subtotal, vat, total };
+}
+
+function settlementPaymentState(settlement){
+  const invoiceTotals = bucketTotals(settlement.lines, "invoice");
+  const cashTotals = bucketTotals(settlement.lines, "cash");
+  const invoiceTotal = invoiceTotals.total;
+  const cashTotal = cashTotals.subtotal;
+  const hasInvoice = invoiceTotal > 0;
+  const hasCash = cashTotal > 0;
+  const isPaid = (!hasInvoice || settlement.invoicePaid)
+    && (!hasCash || settlement.cashPaid)
+    && (hasInvoice || hasCash);
+  return { invoiceTotals, cashTotals, invoiceTotal, cashTotal, hasInvoice, hasCash, isPaid };
 }
 
 function computeSettlementFromLogs(customerId, logIds){
@@ -511,13 +525,14 @@ function renderProducts(){
 function renderSettlements(){
   const el = $("#tab-settlements");
   const list = [...state.settlements].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(s=>{
-    const rowStatus = (s.invoiceStatus === "paid" && s.cashStatus === "paid") ? "paid" : "calculated";
+    const pay = settlementPaymentState(s);
+    const rowStatus = pay.isPaid ? "paid" : (s.status === "calculated" ? "calculated" : "draft");
     const cls = statusClassFromStatus(rowStatus);
-    const totInv = bucketTotals(s.lines, "invoice");
-    const totCash = bucketTotals(s.lines, "cash");
-    const grand = round2(totInv.total + totCash.subtotal);
-    const invoicePillClass = s.invoiceStatus === "paid" ? "pill-paid" : "pill-open";
-    const cashPillClass = s.cashStatus === "paid" ? "pill-paid" : "pill-open";
+    const grand = round2(pay.invoiceTotal + pay.cashTotal);
+    const invoicePillClass = pay.hasInvoice && s.invoicePaid ? "pill-paid" : "pill-open";
+    const cashPillClass = pay.hasCash && s.cashPaid ? "pill-paid" : "pill-open";
+    const invoiceBadge = pay.hasInvoice && s.invoicePaid ? "paid" : "open";
+    const cashBadge = pay.hasCash && s.cashPaid ? "paid" : "open";
     return `
       <div class="item item-compact ${cls}" data-open-settlement="${s.id}">
         <div class="item-main">
@@ -525,8 +540,8 @@ function renderSettlements(){
           <div class="item-sub mono">${esc(s.date || "")} • #${esc((s.id||"").slice(0,8))} • logs ${(s.logIds||[]).length}</div>
         </div>
         <div class="item-right settlement-badges">
-          <div class="pill ${invoicePillClass} mono"><span>Factuur</span><strong>${fmtMoney(totInv.total)}</strong></div>
-          <div class="pill ${cashPillClass} mono"><span>Cash</span><strong>${fmtMoney(totCash.subtotal)}</strong></div>
+          <div class="pill ${invoicePillClass} mono"><span>Factuur ${invoiceBadge}</span><strong>${fmtMoney(pay.invoiceTotal)}</strong></div>
+          <div class="pill ${cashPillClass} mono"><span>Cash ${cashBadge}</span><strong>${fmtMoney(pay.cashTotal)}</strong></div>
           <div class="badge mono">${fmtMoney(grand)}</div>
         </div>
       </div>
@@ -555,8 +570,8 @@ function renderSettlements(){
       logIds: [],
       lines: [],
       status: "draft",
-      invoiceStatus: "open",
-      cashStatus: "open"
+      invoicePaid: false,
+      cashPaid: false
     };
     state.settlements.unshift(s);
     saveState();
@@ -788,7 +803,7 @@ function renderLogSheet(id){
   if (!log){ closeSheet(); return; }
   $("#sheetTitle").textContent = "Werklog";
   const af = settlementForLog(log.id);
-  const locked = af?.status === "paid";
+  const locked = false;
 
   $("#sheetActions").innerHTML = `
     <button class="btn danger" id="delLog">Verwijder</button>
@@ -818,7 +833,7 @@ function renderLogSheet(id){
             <select id="logSettlement" ${locked ? "disabled" : ""}>
               ${settlementOptions}
             </select>
-            ${locked ? `<div class="small">Betaald = vergrendeld. Ontkoppelen/koppelen niet mogelijk.</div>` : `<div class="small">Koppel via dropdown aan bestaande of nieuwe afrekening.</div>`}
+            <div class="small">Koppel via dropdown aan bestaande of nieuwe afrekening.</div>
           </div>
           <div style="flex:1; min-width:220px;">
             <label>Notitie</label>
@@ -941,8 +956,8 @@ function renderLogSheet(id){
         logIds: [log.id],
         lines: [],
         status: "draft",
-        invoiceStatus: "open",
-        cashStatus: "open"
+        invoicePaid: false,
+        cashPaid: false
       };
       // compute default lines
       const computed = computeSettlementFromLogs(s.customerId, s.logIds);
@@ -954,7 +969,6 @@ function renderLogSheet(id){
     } else {
       const s = state.settlements.find(x => x.id === v);
       if (s){
-        if (s.status === "paid"){ alert("Deze afrekening is betaald en vergrendeld."); return; }
         s.logIds = Array.from(new Set([...(s.logIds||[]), log.id]));
         // refresh lines (simple approach): recompute, but preserve existing bucket choices if possible
         const prev = new Map((s.lines||[]).map(li => [li.productId+"|"+li.description, li.bucket]));
@@ -1035,8 +1049,8 @@ function settlementLogbookSummary(s){
 function renderSettlementSheet(id){
   const s = state.settlements.find(x => x.id === id);
   if (!s){ closeSheet(); return; }
-  if (!s.invoiceStatus) s.invoiceStatus = "open";
-  if (!s.cashStatus) s.cashStatus = "open";
+  if (!("invoicePaid" in s)) s.invoicePaid = false;
+  if (!("cashPaid" in s)) s.cashPaid = false;
   $('#sheetTitle').textContent = 'Afrekening';
 
   const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
@@ -1045,13 +1059,11 @@ function renderSettlementSheet(id){
     .filter(l => l.customerId === s.customerId)
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
-  const invT = bucketTotals(s.lines, 'invoice');
-  const cashT = bucketTotals(s.lines, 'cash');
-  const grand = round2(invT.total + cashT.subtotal);
+  const pay = settlementPaymentState(s);
+  const invT = pay.invoiceTotals;
+  const cashT = pay.cashTotals;
+  const grand = round2(pay.invoiceTotal + pay.cashTotal);
   const summary = settlementLogbookSummary(s);
-
-  const invoiceLocked = s.invoiceStatus === 'paid';
-  const cashLocked = s.cashStatus === 'paid';
 
   $('#sheetActions').innerHTML = `
     <button class="btn danger" id="delSettlement">Verwijder</button>
@@ -1067,7 +1079,7 @@ function renderSettlementSheet(id){
             <div class="item-title">${esc(cname(s.customerId))}</div>
             <div class="small mono">${esc(s.date)} • #${esc((s.id||'').slice(0,8))}</div>
           </div>
-          <span class="badge mono">Totaal ${fmtMoney(grand)}</span>
+          <span class="badge mono">Totaal: ${pay.isPaid ? 'BETAALD' : 'OPEN'} • ${fmtMoney(grand)}</span>
         </div>
 
         <div class="row">
@@ -1079,6 +1091,9 @@ function renderSettlementSheet(id){
             <label>Datum</label>
             <input id="sDate" value="${esc(s.date||todayISO())}" />
           </div>
+        </div>
+        <div class="row">
+          <button class="btn" id="markCalculated" ${s.status==='calculated'?'disabled':''}>Markeer als berekend</button>
         </div>
       </div>
 
@@ -1120,32 +1135,30 @@ function renderSettlementSheet(id){
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Factuur</div>
-          <span class="pill ${s.invoiceStatus==='paid'?'pill-paid':'pill-open'} mono">${fmtMoney(invT.total)}</span>
+          <span class="pill ${pay.hasInvoice && s.invoicePaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.invoiceTotal)}</span>
         </div>
         <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw 21% ${fmtMoney(invT.vat)}</div>
         <div class="list">
-          ${renderSettlementLines(s, 'invoice', invoiceLocked)}
+          ${renderSettlementLines(s, 'invoice', false)}
         </div>
         <div class="row">
-          <button class="btn" id="addInvoiceLine" ${invoiceLocked?'disabled':''}>+ Regel toevoegen (Factuur)</button>
-          <button class="btn" id="markInvoicePaid" ${s.invoiceStatus==='paid'?'disabled':''}>Markeer Factuur als Betaald</button>
-          <button class="btn" id="markInvoiceOpen" ${s.invoiceStatus==='open'?'disabled':''}>Zet Factuur terug Open</button>
+          <button class="btn" id="addInvoiceLine">+ Regel toevoegen (Factuur)</button>
+          ${pay.hasInvoice ? `<button class="btn" id="toggleInvoicePaid">Factuur ${s.invoicePaid ? 'open zetten' : 'betaald zetten'}</button>` : `<button class="btn" disabled>Geen factuurbedrag</button>`}
         </div>
       </div>
 
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Cash</div>
-          <span class="pill ${s.cashStatus==='paid'?'pill-paid':'pill-open'} mono">${fmtMoney(cashT.subtotal)}</span>
+          <span class="pill ${pay.hasCash && s.cashPaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.cashTotal)}</span>
         </div>
         <div class="small mono">Cash zonder btw.</div>
         <div class="list">
-          ${renderSettlementLines(s, 'cash', cashLocked)}
+          ${renderSettlementLines(s, 'cash', false)}
         </div>
         <div class="row">
-          <button class="btn" id="addCashLine" ${cashLocked?'disabled':''}>+ Regel toevoegen (Cash)</button>
-          <button class="btn" id="markCashPaid" ${s.cashStatus==='paid'?'disabled':''}>Markeer Cash als Betaald</button>
-          <button class="btn" id="markCashOpen" ${s.cashStatus==='open'?'disabled':''}>Zet Cash terug Open</button>
+          <button class="btn" id="addCashLine">+ Regel toevoegen (Cash)</button>
+          ${pay.hasCash ? `<button class="btn" id="toggleCashPaid">Cash ${s.cashPaid ? 'open zetten' : 'betaald zetten'}</button>` : `<button class="btn" disabled>Geen cashbedrag</button>`}
         </div>
       </div>
 
@@ -1159,26 +1172,31 @@ function renderSettlementSheet(id){
     saveState(); closeSheet();
   };
 
-  $('#markInvoicePaid').onclick = ()=>{
-    if (!confirmAction('Factuur markeren als betaald?')) return;
-    s.invoiceStatus = 'paid';
+  $('#markCalculated').onclick = ()=>{
+    if (!confirmAction('Afrekening markeren als berekend?')) return;
+    s.status = 'calculated';
     saveState(); renderSheet(); render();
   };
-  $('#markInvoiceOpen').onclick = ()=>{
-    if (!confirmAction('Factuur terug open zetten?')) return;
-    s.invoiceStatus = 'open';
-    saveState(); renderSheet(); render();
-  };
-  $('#markCashPaid').onclick = ()=>{
-    if (!confirmAction('Cash markeren als betaald?')) return;
-    s.cashStatus = 'paid';
-    saveState(); renderSheet(); render();
-  };
-  $('#markCashOpen').onclick = ()=>{
-    if (!confirmAction('Cash terug open zetten?')) return;
-    s.cashStatus = 'open';
-    saveState(); renderSheet(); render();
-  };
+
+  const invoiceToggle = $('#toggleInvoicePaid');
+  if (invoiceToggle){
+    invoiceToggle.onclick = ()=>{
+      const next = !s.invoicePaid;
+      if (!confirmAction(next ? 'Factuur markeren als betaald?' : 'Factuur terug open zetten?')) return;
+      s.invoicePaid = next;
+      saveState(); renderSheet(); render();
+    };
+  }
+
+  const cashToggle = $('#toggleCashPaid');
+  if (cashToggle){
+    cashToggle.onclick = ()=>{
+      const next = !s.cashPaid;
+      if (!confirmAction(next ? 'Cash markeren als betaald?' : 'Cash terug open zetten?')) return;
+      s.cashPaid = next;
+      saveState(); renderSheet(); render();
+    };
+  }
 
   $('#sCustomer').onchange = ()=>{
     s.customerId = $('#sCustomer').value;
