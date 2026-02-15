@@ -184,6 +184,12 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   color:var(--muted);
 }
 
+.icon-toggle.is-active.icon-toggle-neutral{
+  color:var(--text);
+  border-color:rgba(233,238,246,.34);
+  background:rgba(233,238,246,.08);
+}
+
 .icon-toggle.is-active.icon-toggle-pause{
   color:#ff9a3d;
   border-color:rgba(255,154,61,.62);
@@ -368,25 +374,30 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   padding: 10px 12px;
 }
 
-.settlement-header-card{
-  gap:10px;
+.meta-row{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
 }
 
-.settlement-header-top{
-  align-items:flex-start;
+.meta-item{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
 }
 
-.settlement-header-toggles{
-  margin-left:auto;
+.meta-icon{
+  width:15px;
+  height:15px;
 }
 
-.settlement-meta-row{
-  align-items:flex-end;
+.tabular{
+  font-variant-numeric: tabular-nums;
 }
 
 .settlement-row{
-  padding: 10px 12px;
-  background: rgba(255,255,255,.015);
+  background: rgba(255,255,255,.012);
 }
 
 .settlement-row-top,
@@ -397,19 +408,45 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   gap:10px;
 }
 
-.settlement-row-bottom{
-  margin-top:6px;
+.settlement-indicators{
+  display:flex;
+  gap:8px;
+  align-items:center;
 }
 
-.settlement-pills{
-  flex-wrap:wrap;
-  gap:6px;
+.settlement-indicator{
+  width:20px;
+  height:20px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid var(--border);
+  border-radius:999px;
+  color:var(--muted);
+  position:relative;
 }
 
-.settlement-lines-wrap{
-  overflow-x:auto;
+.settlement-indicator.is-hidden{ opacity:.2; border-style:dashed; }
+.settlement-indicator.is-open{ opacity:.9; }
+.settlement-indicator.is-paid{ opacity:1; }
+
+.indicator-check{
+  position:absolute;
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:currentColor;
+  right:-2px;
+  bottom:-2px;
 }
 
+.compact-card{
+  padding:10px 12px;
+}
+
+.settlement-detail .compact-row{
+  grid-template-columns:84px minmax(0,1fr);
+}
 
 .log-detail-compact .compact-section{
   border-bottom:1px solid var(--border);
@@ -601,17 +638,25 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
 }
 
 .settlement-lines-row{
-  padding:4px;
+  padding:3px;
   border:1px solid var(--border);
-  border-radius:10px;
-  background:rgba(255,255,255,.015);
+  border-radius:8px;
+  background:rgba(255,255,255,.01);
 }
 
-.settlement-cell-input{
-  min-height:32px;
+.settlement-cell-input,
+.settlement-cell-readonly{
+  min-height:30px;
   border-radius:8px;
   padding:6px 8px;
   font-size:13px;
+}
+
+.settlement-cell-readonly{
+  display:flex;
+  align-items:center;
+  border:1px solid transparent;
+  color:var(--text);
 }
 
 .settlement-lines-grid .num,
@@ -650,51 +695,32 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   }
 }
 
+
+
 .pill{
   display:inline-flex;
   align-items:center;
-  padding:4px 9px;
+  padding:3px 8px;
   border-radius:999px;
   border:1px solid var(--border);
   font-size:12px;
-  color:var(--text);
-  background: rgba(233,238,246,.04);
+  color:var(--muted);
 }
-.pill-open{
-  background: rgba(255, 188, 56, 0.09);
-  border-color: rgba(255, 188, 56, 0.3);
-}
-.pill-calc{
-  background: rgba(255, 140, 0, 0.12);
-  border-color: rgba(255, 140, 0, 0.34);
-}
-.pill-paid{
-  background: rgba(0, 160, 90, 0.1);
-  border-color: rgba(0, 160, 90, 0.32);
-}
-.pill-neutral{
-  background: rgba(233,238,246,.04);
-  border-color: var(--border);
-  color: var(--muted);
-}
+.pill-open{ border-color: rgba(255, 188, 56, 0.3); color:var(--text); }
+.pill-calc{ border-color: rgba(255, 140, 0, 0.34); color:var(--text); }
+.pill-paid{ border-color: rgba(0, 160, 90, 0.32); color:var(--text); }
+.pill-neutral{ border-color: var(--border); }
 
-.amount-badge{
-  font-weight:700;
-}
+.card-accent--open{ border-left:3px solid rgba(255,204,0,.72); }
+.card-accent--calculated{ border-left:3px solid rgba(255,140,0,.82); }
+.card-accent--paid{ border-left:3px solid rgba(0,160,90,.82); }
 
 .status-linked{ background: var(--status-linked-bg); border-left:4px solid var(--status-linked-border); }
 .status-calculated{ background: var(--status-calculated-bg); border-left:4px solid var(--status-calculated-border); }
 .status-paid{ background: var(--status-paid-bg); border-left:4px solid var(--status-paid-border); }
 
-.linked-log-accent-calculated{
-  border-left:3px solid rgba(255, 140, 0, 0.82);
-}
-
-.linked-log-accent-paid{
-  border-left:3px solid rgba(0, 160, 90, 0.82);
-}
-
 .sheet-actions{ display:flex; gap:8px; }
+
 
 .sheet-body{
   padding: 0 0 18px 0;
