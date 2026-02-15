@@ -699,7 +699,7 @@ function render(){
       });
       setTimeout(()=>{
         detailPage.className = "page hidden";
-        detailPage.innerHTML = '<div class="detail-head"><div id="sheetTitle" class="hidden"></div><div class="sheet-actions" id="sheetActions"></div></div><div class="sheet-body" id="sheetBody"></div>';
+        detailPage.innerHTML = '<div class="page-inner"><div class="detail-head"><div id="sheetTitle" class="hidden"></div><div class="sheet-actions" id="sheetActions"></div></div><div class="sheet-body" id="sheetBody"></div></div>';
       }, 280);
     } else {
       detailPage.className = "page hidden";
