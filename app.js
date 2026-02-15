@@ -478,6 +478,32 @@ function sumBreakMs(log){
 function sumItemsAmount(log){
   return round2((log.items||[]).reduce((acc,it)=> acc + (Number(it.qty)||0)*(Number(it.unitPrice)||0), 0));
 }
+function getStartTime(log){
+  const firstWorkSegment = (log.segments || [])
+    .filter(segment => segment?.type === "work" && Number.isFinite(segment.start))
+    .sort((a, b) => a.start - b.start)[0];
+  const startMs = firstWorkSegment?.start ?? log.startAt ?? log.startedAt ?? null;
+  return Number.isFinite(startMs) ? fmtClock(startMs) : "—";
+}
+function getTotalWorkDuration(log){
+  const totalWorkMinutes = Math.floor(sumWorkMs(log) / 60000);
+  const compact = formatDurationCompact(totalWorkMinutes);
+  return compact.endsWith("m") ? compact.slice(0, -1) : compact;
+}
+function countExtraProducts(log){
+  const workProductIds = new Set(
+    (state.products || [])
+      .filter(product => ["werk", "werk (uur)", "arbeid"].includes((product.name || "").trim().toLowerCase()))
+      .map(product => product.id)
+  );
+
+  return (log.items || []).reduce((count, item) => {
+    const product = getProduct(item.productId);
+    const productName = (product?.name || "").trim().toLowerCase();
+    const isWork = workProductIds.has(item.productId) || ["werk", "werk (uur)", "arbeid"].includes(productName);
+    return isWork ? count : count + 1;
+  }, 0);
+}
 function getCustomer(id){ return state.customers.find(c => c.id === id) || null; }
 function cname(id){ const c=getCustomer(id); return c ? (c.nickname || c.name || "Klant") : "Klant"; }
 function getProduct(id){ return state.products.find(p => p.id === id) || null; }
@@ -570,27 +596,16 @@ function getWorkLogStatus(logId){
 function renderLogCard(log){
   const st = getWorkLogStatus(log.id);
   const cls = statusClassFromStatus(st);
-  const workMinutes = Math.floor(sumWorkMs(log) / 60000);
-  const breakMinutes = Math.floor(sumBreakMs(log) / 60000);
-  const productsTotal = sumItemsAmount(log);
+  const startTime = getStartTime(log);
+  const workDuration = getTotalWorkDuration(log);
+  const extraProducts = countExtraProducts(log);
+  const extraLabel = extraProducts > 0 ? `<span>Extra +${extraProducts}</span>` : "";
   const metaRow = `
     <div class="item-sub log-meta-row mono">
-      <span>${esc(formatDatePretty(log.date))}</span>
-      <span aria-hidden="true">·</span>
-      <span class="meta-item">
-        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-        <span>${formatDurationCompact(workMinutes)}</span>
-      </span>
-      <span aria-hidden="true">·</span>
-      <span class="meta-item">
-        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M8 4v3M16 4v3M5 10h14" stroke-linecap="round"></path><rect x="5" y="7" width="14" height="13" rx="2"></rect><path d="M10 14h4" stroke-linecap="round"></path></svg>
-        <span>${formatDurationCompact(breakMinutes)}</span>
-      </span>
-      <span aria-hidden="true">·</span>
-      <span class="meta-item">
-        <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M5 7h14l-1.5 7h-11z"></path><path d="M9 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>
-        <span>${formatMoneyEUR(productsTotal)}</span>
-      </span>
+      <span>Start ${esc(startTime)}</span>
+      <span aria-hidden="true">•</span>
+      <span>Tijd ${esc(workDuration)}</span>
+      ${extraLabel ? `<span aria-hidden="true">•</span>${extraLabel}` : ""}
     </div>
   `;
 
