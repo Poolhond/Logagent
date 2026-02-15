@@ -249,7 +249,7 @@ function seedDemoMonths(st, { months = 3, force = false } = {}){
     const take = pool.slice(0, ri(1, Math.min(6, pool.length)));
     take.forEach(l => { l._used = true; });
 
-    const computed = computeSettlementFromLogs(cid, take.map(l => l.id));
+    const computed = computeSettlementFromLogsInState(st, cid, take.map(l => l.id));
     const lines = [];
     const labour = computed.lines.find(line => (line.description||"").toLowerCase() === "arbeid");
     if (labour) lines.push(labour);
@@ -426,11 +426,11 @@ function settlementPaymentState(settlement){
   return { invoiceTotals, cashTotals, invoiceTotal, cashTotal, hasInvoice, hasCash, isPaid };
 }
 
-function computeSettlementFromLogs(customerId, logIds){
+function computeSettlementFromLogsInState(sourceState, customerId, logIds){
   let workMs = 0;
   const itemMap = new Map(); // productId -> {qty, unitPrice}
   for (const id of logIds){
-    const log = state.logs.find(l => l.id === id);
+    const log = sourceState.logs.find(l => l.id === id);
     if (!log) continue;
     workMs += sumWorkMs(log);
     for (const it of (log.items||[])){
@@ -445,7 +445,7 @@ function computeSettlementFromLogs(customerId, logIds){
 
   // build lines: labour + grouped items
   const lines = [];
-  const labourProduct = state.products.find(p => p.name.toLowerCase() === "arbeid");
+  const labourProduct = sourceState.products.find(p => p.name.toLowerCase() === "arbeid");
   if (hours > 0){
     lines.push({
       id: uid(),
@@ -453,13 +453,13 @@ function computeSettlementFromLogs(customerId, logIds){
       description: labourProduct?.name || "Arbeid",
       unit: labourProduct?.unit || "uur",
       qty: hours,
-      unitPrice: Number(state.settings.hourlyRate||38),
+      unitPrice: Number(sourceState.settings.hourlyRate||38),
       vatRate: labourProduct?.vatRate ?? 0.21,
       bucket: "invoice"
     });
   }
   for (const [productId, v] of itemMap.entries()){
-    const prod = getProduct(productId);
+    const prod = sourceState.products.find(p => p.id === productId);
     lines.push({
       id: uid(),
       productId,
@@ -473,6 +473,10 @@ function computeSettlementFromLogs(customerId, logIds){
   }
 
   return { workMs, hours, lines };
+}
+
+function computeSettlementFromLogs(customerId, logIds){
+  return computeSettlementFromLogsInState(state, customerId, logIds);
 }
 
 // ---------- UI state ----------
