@@ -117,6 +117,85 @@ body{
 .row.space{ justify-content:space-between; }
 .rowtight{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; }
 
+
+.settlement-status-bar{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:8px;
+}
+
+.status-toggle{
+  min-height:40px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--muted);
+  padding:8px 10px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:flex-start;
+  gap:2px;
+  cursor:pointer;
+}
+
+.status-toggle-main{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+.status-toggle .icon{
+  width:17px;
+  height:17px;
+}
+
+.status-toggle-label{
+  font-size:13px;
+  font-weight:600;
+}
+
+.status-toggle-value{
+  font-size:11px;
+  color:var(--muted);
+}
+
+.status-toggle.is-active .status-toggle-value{
+  color:currentColor;
+}
+
+.status-toggle.is-active.status-toggle-calculated{
+  color:#ff9a3d;
+  border-color:rgba(255,154,61,.55);
+  background:rgba(255,154,61,.10);
+}
+
+.status-toggle.is-active.status-toggle-invoice{
+  color:#6fb0ff;
+  border-color:rgba(111,176,255,.55);
+  background:rgba(111,176,255,.10);
+}
+
+.status-toggle.is-active.status-toggle-cash{
+  color:#3ac483;
+  border-color:rgba(58,196,131,.55);
+  background:rgba(58,196,131,.10);
+}
+
+@media (max-width: 420px){
+  .settlement-status-bar{
+    gap:6px;
+  }
+
+  .status-toggle{
+    padding:8px;
+  }
+
+  .status-toggle-label{
+    font-size:12px;
+  }
+}
+
 .small{ font-size:12px; color:var(--muted); }
 .mono{ font-variant-numeric: tabular-nums; }
 .hr{ height:1px; background:var(--border); margin:10px 0; }
