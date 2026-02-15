@@ -1,4 +1,4 @@
-const CACHE = "tuinlog-cache-v1";
+const CACHE = "tuinlog-cache-v2";
 const ASSETS = [
   "./",
   "./index.html",

@@ -104,6 +104,88 @@ function confirmAction(label){
   return confirm(label);
 }
 
+function ensureModalRoot(){
+  let root = document.getElementById("appModalRoot");
+  if (root) return root;
+  root = document.createElement("div");
+  root.id = "appModalRoot";
+  document.body.appendChild(root);
+  return root;
+}
+
+function closeModal(){
+  const root = document.getElementById("appModalRoot");
+  if (!root) return;
+  root.innerHTML = "";
+}
+
+function openConfirmModal({ title, message, confirmText = "Bevestigen", cancelText = "Annuleren", danger = false }){
+  return new Promise((resolve)=>{
+    const root = ensureModalRoot();
+    root.innerHTML = `
+      <div class="modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+          <div class="item-title" id="modalTitle">${esc(title || "Bevestigen")}</div>
+          <div class="small modal-message">${esc(message || "")}</div>
+          <div class="row modal-actions">
+            <button class="btn" id="modalCancelBtn">${esc(cancelText)}</button>
+            <button class="btn ${danger ? "danger" : "primary"}" id="modalConfirmBtn">${esc(confirmText)}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const finish = (value)=>{
+      closeModal();
+      resolve(value);
+    };
+
+    root.querySelector("#modalCancelBtn")?.addEventListener("click", ()=> finish(false));
+    root.querySelector("#modalConfirmBtn")?.addEventListener("click", ()=> finish(true));
+    root.querySelector(".modal-backdrop")?.addEventListener("click", (e)=>{
+      if (e.target.classList.contains("modal-backdrop")) finish(false);
+    });
+  });
+}
+
+function openTextConfirmModal({ title, message, expectedText, confirmText = "Definitief wissen", cancelText = "Annuleren" }){
+  return new Promise((resolve)=>{
+    const root = ensureModalRoot();
+    root.innerHTML = `
+      <div class="modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitleTextConfirm">
+          <div class="item-title" id="modalTitleTextConfirm">${esc(title || "Bevestigen")}</div>
+          <div class="small modal-message">${esc(message || "")}</div>
+          <label for="modalConfirmInput">Typ <span class="mono">${esc(expectedText)}</span> om verder te gaan</label>
+          <input id="modalConfirmInput" autocomplete="off" />
+          <div class="row modal-actions">
+            <button class="btn" id="modalCancelBtn">${esc(cancelText)}</button>
+            <button class="btn danger" id="modalConfirmBtn" disabled>${esc(confirmText)}</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const input = root.querySelector("#modalConfirmInput");
+    const confirmBtn = root.querySelector("#modalConfirmBtn");
+    const finish = (value)=>{
+      closeModal();
+      resolve(value);
+    };
+
+    input?.addEventListener("input", ()=>{
+      const valid = (input.value || "").trim().toUpperCase() === String(expectedText || "").trim().toUpperCase();
+      confirmBtn.disabled = !valid;
+    });
+
+    root.querySelector("#modalCancelBtn")?.addEventListener("click", ()=> finish(false));
+    confirmBtn?.addEventListener("click", ()=> finish(true));
+    root.querySelector(".modal-backdrop")?.addEventListener("click", (e)=>{
+      if (e.target.classList.contains("modal-backdrop")) finish(false);
+    });
+  });
+}
+
 // ---------- State ----------
 function defaultState(){
   return {
@@ -1411,8 +1493,50 @@ function renderSettings(){
         <div class="item-title">Geavanceerd</div>
         <button class="btn danger" id="resetAllBtn">Reset alles</button>
       </div>
+
+      <div class="card stack">
+        <div class="item-title">Backup & Herstel</div>
+        <div class="small">Maak een reservekopie van je volledige lokale data of herstel een eerdere backup.</div>
+        <div class="row">
+          <button class="btn primary" id="backupExportBtn">Backup downloaden</button>
+          <button class="btn" id="backupImportBtn">Backup importeren</button>
+          <input id="backupImportInput" type="file" accept=".json,application/json" class="hidden" />
+        </div>
+        <button class="btn danger" id="backupWipeBtn">Alles wissen</button>
+        <div class="small backup-warning">Let op: hiermee verwijder je alle klanten, werklogs en facturen permanent.</div>
+        <div class="small backup-feedback ${state.ui?.backupFeedback?.type === "error" ? "is-error" : "is-success"}" id="backupFeedback">${esc(state.ui?.backupFeedback?.text || "")}</div>
+      </div>
     </div>
   `;
+
+  const setBackupFeedback = (type, text)=>{
+    state.ui = state.ui || {};
+    state.ui.backupFeedback = { type, text };
+    const feedbackEl = $("#backupFeedback");
+    if (!feedbackEl) return;
+    feedbackEl.textContent = text || "";
+    feedbackEl.classList.remove("is-error", "is-success");
+    if (text){
+      feedbackEl.classList.add(type === "error" ? "is-error" : "is-success");
+    }
+  };
+
+  const parseBackupFile = (file)=> new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(String(reader.result || ""));
+    reader.onerror = ()=> reject(new Error("Bestand kon niet worden gelezen."));
+    reader.readAsText(file);
+  });
+
+  const validateBackupPayload = (payload)=>{
+    if (!payload || typeof payload !== "object") return "Ongeldige backup: JSON-object ontbreekt.";
+    if (payload.version !== STORAGE_KEY) return "Ongeldige backup-versie. Alleen backups van TuinLog MVP v1 zijn toegestaan.";
+    if (!payload.data || typeof payload.data !== "object") return "Ongeldige backup: data-object ontbreekt.";
+    const required = ["customers", "logs", "settlements", "settings"];
+    const missing = required.filter((key)=> !(key in payload.data));
+    if (missing.length) return `Ongeldige backup: ontbrekende velden (${missing.join(", ")}).`;
+    return "";
+  };
 
   $("#saveSettings").onclick = ()=>{
     const hourly = Number(String($("#settingHourly").value).replace(",", ".") || "0");
@@ -1450,6 +1574,113 @@ function renderSettings(){
 
   $("#resetAllBtn").onclick = ()=>{
     if (!confirmAction("Reset alles? Dit wist alle lokale data.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    location.reload();
+  };
+
+  $("#backupExportBtn").onclick = ()=>{
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw){
+        setBackupFeedback("error", "Er is geen lokale data gevonden om te exporteren.");
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: STORAGE_KEY,
+        data: parsed,
+      };
+      const today = new Date().toISOString().slice(0,10);
+      const filename = `tuinlog-backup-${today}.json`;
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setBackupFeedback("success", `Backup opgeslagen als ${filename}.`);
+    } catch {
+      setBackupFeedback("error", "Backup exporteren is mislukt. Controleer of je data geldig is.");
+    }
+  };
+
+  $("#backupImportBtn").onclick = ()=>{
+    $("#backupImportInput")?.click();
+  };
+
+  $("#backupImportInput").onchange = async (event)=>{
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await parseBackupFile(file);
+      let payload = null;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        setBackupFeedback("error", "Import mislukt: bestand bevat geen geldige JSON.");
+        event.target.value = "";
+        return;
+      }
+
+      const validationError = validateBackupPayload(payload);
+      if (validationError){
+        setBackupFeedback("error", validationError);
+        event.target.value = "";
+        return;
+      }
+
+      const exportedAt = payload.exportedAt || "onbekende datum";
+      const confirmed = await openConfirmModal({
+        title: "Backup herstellen",
+        message: `Weet je zeker dat je alle huidige data wilt vervangen door de backup van ${exportedAt}?`,
+        confirmText: "Herstellen",
+        cancelText: "Annuleren",
+      });
+      if (!confirmed){
+        setBackupFeedback("error", "Herstel geannuleerd.");
+        event.target.value = "";
+        return;
+      }
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.data));
+      location.reload();
+    } catch {
+      setBackupFeedback("error", "Import mislukt: kon het backup-bestand niet verwerken.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  $("#backupWipeBtn").onclick = async ()=>{
+    const firstConfirm = await openConfirmModal({
+      title: "Alles wissen",
+      message: "Weet je zeker dat je alle data permanent wilt wissen? Dit kan niet ongedaan gemaakt worden.",
+      confirmText: "Verder",
+      cancelText: "Annuleren",
+      danger: true,
+    });
+    if (!firstConfirm){
+      setBackupFeedback("error", "Wissen geannuleerd.");
+      return;
+    }
+
+    const secondConfirm = await openTextConfirmModal({
+      title: "Laatste bevestiging",
+      message: "Dit verwijdert alle lokale data definitief.",
+      expectedText: "WISSEN",
+      confirmText: "Definitief wissen",
+      cancelText: "Annuleren",
+    });
+    if (!secondConfirm){
+      setBackupFeedback("error", "Wissen geannuleerd.");
+      return;
+    }
+
     localStorage.removeItem(STORAGE_KEY);
     location.reload();
   };
