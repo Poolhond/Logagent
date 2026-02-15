@@ -529,20 +529,24 @@ function renderSettlements(){
     const rowStatus = pay.isPaid ? "paid" : (s.status === "calculated" ? "calculated" : "draft");
     const cls = statusClassFromStatus(rowStatus);
     const grand = round2(pay.invoiceTotal + pay.cashTotal);
-    const invoicePillClass = pay.hasInvoice && s.invoicePaid ? "pill-paid" : "pill-open";
-    const cashPillClass = pay.hasCash && s.cashPaid ? "pill-paid" : "pill-open";
-    const invoiceBadge = pay.hasInvoice && s.invoicePaid ? "paid" : "open";
-    const cashBadge = pay.hasCash && s.cashPaid ? "paid" : "open";
+    const invoicePillClass = s.invoicePaid ? "pill-paid" : "pill-open";
+    const cashPillClass = s.cashPaid ? "pill-paid" : "pill-open";
+    const meta = [esc(s.date || ""), `logs ${(s.logIds||[]).length}`].filter(Boolean).join(" • ");
+
+    const pills = [
+      pay.hasInvoice ? `<div class="pill ${invoicePillClass} mono">Factuur ${s.invoicePaid ? "paid" : "open"}</div>` : "",
+      pay.hasCash ? `<div class="pill ${cashPillClass} mono">Cash ${s.cashPaid ? "paid" : "open"}</div>` : ""
+    ].filter(Boolean).join("");
+
     return `
-      <div class="item item-compact ${cls}" data-open-settlement="${s.id}">
-        <div class="item-main">
+      <div class="item item-compact settlement-row ${cls}" data-open-settlement="${s.id}">
+        <div class="settlement-row-top">
           <div class="item-title">${esc(cname(s.customerId))}</div>
-          <div class="item-sub mono">${esc(s.date || "")} • #${esc((s.id||"").slice(0,8))} • logs ${(s.logIds||[]).length}</div>
+          <div class="badge mono amount-badge">${fmtMoney(grand)}</div>
         </div>
-        <div class="item-right settlement-badges">
-          <div class="pill ${invoicePillClass} mono"><span>Factuur ${invoiceBadge}</span><strong>${fmtMoney(pay.invoiceTotal)}</strong></div>
-          <div class="pill ${cashPillClass} mono"><span>Cash ${cashBadge}</span><strong>${fmtMoney(pay.cashTotal)}</strong></div>
-          <div class="badge mono">${fmtMoney(grand)}</div>
+        <div class="settlement-row-bottom">
+          <div class="item-sub mono">${meta}</div>
+          <div class="item-right settlement-pills">${pills}</div>
         </div>
       </div>
     `;

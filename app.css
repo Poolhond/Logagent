@@ -167,29 +167,54 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   padding: 10px 12px;
 }
 
-.settlement-badges{
-  flex-wrap: wrap;
-  gap: 6px;
+.settlement-row{
+  padding: 10px 12px;
+  background: rgba(255,255,255,.015);
+}
+
+.settlement-row-top,
+.settlement-row-bottom{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.settlement-row-bottom{
+  margin-top:6px;
+}
+
+.settlement-pills{
+  flex-wrap:wrap;
+  gap:6px;
 }
 
 .pill{
   display:inline-flex;
   align-items:center;
-  gap:8px;
-  padding:6px 10px;
-  border-radius:10px;
+  padding:4px 9px;
+  border-radius:999px;
   border:1px solid var(--border);
   font-size:12px;
   color:var(--text);
+  background: rgba(233,238,246,.04);
 }
-.pill span{ color:var(--muted); }
 .pill-open{
-  background: rgba(255, 188, 56, 0.14);
-  border-color: rgba(255, 188, 56, 0.45);
+  background: rgba(255, 188, 56, 0.09);
+  border-color: rgba(255, 188, 56, 0.3);
 }
 .pill-paid{
-  background: rgba(0, 160, 90, 0.14);
-  border-color: rgba(0, 160, 90, 0.45);
+  background: rgba(0, 160, 90, 0.1);
+  border-color: rgba(0, 160, 90, 0.32);
+}
+.pill-neutral{
+  background: rgba(233,238,246,.04);
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+.amount-badge{
+  font-weight:700;
 }
 
 .status-linked{ background: var(--status-linked-bg); border-left:4px solid var(--status-linked-border); }
