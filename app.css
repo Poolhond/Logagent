@@ -819,3 +819,50 @@ h2{
   font-size:13px;
   font-weight:700;
 }
+
+.modal-backdrop{
+  position:fixed;
+  inset:0;
+  z-index:120;
+  background:rgba(4,8,12,.72);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+
+.modal-card{
+  width:min(460px, 100%);
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.modal-message{
+  color:var(--text);
+  line-height:1.4;
+}
+
+.modal-actions{
+  justify-content:flex-end;
+}
+
+.backup-warning{
+  color:rgba(255,77,77,.92);
+}
+
+.backup-feedback{
+  min-height:18px;
+}
+
+.backup-feedback.is-success{
+  color:#65d39c;
+}
+
+.backup-feedback.is-error{
+  color:#ff8d8d;
+}
