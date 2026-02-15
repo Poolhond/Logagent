@@ -630,23 +630,13 @@ function getSettlementTotals(settlement){
 }
 function getSettlementVisualState(settlement){
   if (!settlement) return { state: "open", accentClass: "card-accent--open", navClass: "nav--linked" };
-  const totals = getSettlementTotals(settlement);
-  const invoiceUsed = totals.invoiceTotal > 0;
-  const cashUsed = totals.cashTotal > 0;
-  const invoicePaid = Boolean(settlement.invoicePaid);
-  const cashPaid = Boolean(settlement.cashPaid);
-
-  const paid = (
-    (invoiceUsed && !cashUsed && invoicePaid) ||
-    (cashUsed && !invoiceUsed && cashPaid) ||
-    (invoiceUsed && cashUsed && invoicePaid && cashPaid)
-  );
-
-  if (paid) return { state: "paid", accentClass: "card-accent--paid", navClass: "nav--paid" };
+  if (settlement.invoicePaid && settlement.cashPaid){
+    return { state: "paid", accentClass: "card-accent--paid", navClass: "nav--paid" };
+  }
   if (settlement.markedCalculated || settlement.status === "calculated"){
     return { state: "calculated", accentClass: "card-accent--calculated", navClass: "nav--calculated" };
   }
-  return { state: "open", accentClass: "card-accent--open", navClass: "nav--linked" };
+  return { state: "draft", accentClass: "card-accent--open", navClass: "nav--linked" };
 }
 function isSettlementPaid(settlement){
   return getSettlementVisualState(settlement).state === "paid";
@@ -732,6 +722,15 @@ function settlementPaymentState(settlement){
   const hasCash = cashTotal > 0;
   const isPaid = getSettlementVisualState(settlement).state === "paid";
   return { invoiceTotals, cashTotals, invoiceTotal, cashTotal, hasInvoice, hasCash, isPaid };
+}
+
+function syncSettlementStatus(settlement){
+  if (!settlement) return;
+  if (settlement.invoicePaid && settlement.cashPaid){
+    settlement.status = "paid";
+    return;
+  }
+  settlement.status = settlement.markedCalculated ? "calculated" : "draft";
 }
 
 function computeSettlementFromLogsInState(sourceState, customerId, logIds){
@@ -2340,18 +2339,21 @@ function settlementLogbookSummary(s){
   return { linkedCount: linkedLogs.length, totalWorkMs, totalProductCosts, totalLogPrice };
 }
 
-function renderIconToggle({ id, active, variant, icon, label }){
-  const classes = ["icon-toggle", `icon-toggle-${variant}`];
+function renderSettlementStatusToggle({ id, active, label, icon, activeClass, stateLabel }){
+  const classes = ["status-toggle", activeClass];
   if (active) classes.push("is-active");
   return `
     <button
-      class="${classes.join(" ")}"
+      class="${classes.join(" ")}" 
       id="${id}"
       type="button"
-      aria-label="${esc(label)}"
-      title="${esc(label)}"
+      aria-pressed="${active ? "true" : "false"}"
     >
-      ${icon}
+      <span class="status-toggle-main">
+        <span class="status-toggle-icon" aria-hidden="true">${icon}</span>
+        <span class="status-toggle-label">${esc(label)}</span>
+      </span>
+      <span class="status-toggle-value">${esc(stateLabel)}</span>
     </button>
   `;
 }
@@ -2362,6 +2364,7 @@ function renderSettlementSheet(id){
   if (!("invoicePaid" in s)) s.invoicePaid = false;
   if (!("cashPaid" in s)) s.cashPaid = false;
   if (!("markedCalculated" in s)) s.markedCalculated = s.status === "calculated";
+  syncSettlementStatus(s);
   ensureDefaultSettlementLines(s);
 
   const isEdit = isSettlementEditing(s.id);
@@ -2383,6 +2386,35 @@ function renderSettlementSheet(id){
 
   $('#sheetBody').innerHTML = `
     <div class="stack settlement-detail ${visual.accentClass}">
+      <div class="card stack compact-card">
+        <div class="settlement-status-bar" role="group" aria-label="Afrekening status acties">
+          ${renderSettlementStatusToggle({
+            id: "toggleCalculated",
+            active: Boolean(s.markedCalculated),
+            label: "Berekend",
+            stateLabel: s.markedCalculated ? "Actief" : "Concept",
+            activeClass: "status-toggle-calculated",
+            icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 7h8M8 12h3M13 12h3M8 16h8" stroke-linecap="round"></path></svg>`
+          })}
+          ${renderSettlementStatusToggle({
+            id: "toggleInvoicePaid",
+            active: Boolean(s.invoicePaid),
+            label: "Factuur",
+            stateLabel: s.invoicePaid ? "Betaald" : "Open",
+            activeClass: "status-toggle-invoice",
+            icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"></rect><path d="M2.5 10h19" stroke-linecap="round"></path><path d="M7 14.5h4" stroke-linecap="round"></path></svg>`
+          })}
+          ${renderSettlementStatusToggle({
+            id: "toggleCashPaid",
+            active: Boolean(s.cashPaid),
+            label: "Cash",
+            stateLabel: s.cashPaid ? "Betaald" : "Open",
+            activeClass: "status-toggle-cash",
+            icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="8.5" cy="12" r="3.5"></circle><circle cx="15.5" cy="12" r="3.5"></circle><path d="M12 8.5v7" stroke-linecap="round"></path></svg>`
+          })}
+        </div>
+      </div>
+
       <div class="card stack compact-card">
         <div class="row space"><h2>Gekoppelde logs</h2>${isEdit ? `<button class="btn" id="btnRecalc">Herbereken uit logs</button>` : ""}</div>
         <div class="list" id="sLogs">
@@ -2438,15 +2470,26 @@ function renderSettlementSheet(id){
         <h2>Acties</h2>
         <div class="compact-row"><label>Klant</label><div><select id="sCustomer">${customerOptions}</select></div></div>
         <div class="compact-row"><label>Datum</label><div><input id="sDate" type="date" value="${esc(s.date||todayISO())}" /></div></div>
-        <div class="rowtight" role="group" aria-label="Afrekening status">
-          ${renderIconToggle({ id: "toggleCalculated", active: Boolean(s.markedCalculated || s.status === 'calculated'), variant: "neutral", label: "Afrekening berekend", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h3M13 12h3M8 16h8" stroke-linecap="round"></path></svg>` })}
-          ${pay.hasInvoice ? renderIconToggle({ id: "toggleInvoicePaid", active: s.invoicePaid, variant: "neutral", label: "Factuur betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 3h9l3 3v15H6z"></path><path d="M15 3v3h3M9 11h6M9 15h6" stroke-linecap="round"></path></svg>` }) : ""}
-          ${pay.hasCash ? renderIconToggle({ id: "toggleCashPaid", active: s.cashPaid, variant: "neutral", label: "Cash betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="6" width="18" height="12" rx="3"></rect><path d="M8 12h8" stroke-linecap="round"></path></svg>` }) : ""}
-        </div>
         <button class="btn danger" id="delSettlement">Verwijder</button>
       </div>` : ""}
     </div>
   `;
+
+  $('#toggleCalculated').onclick = ()=>{
+    s.markedCalculated = !s.markedCalculated;
+    syncSettlementStatus(s);
+    saveState(); renderSheet(); render();
+  };
+  $('#toggleInvoicePaid').onclick = ()=>{
+    s.invoicePaid = !s.invoicePaid;
+    syncSettlementStatus(s);
+    saveState(); renderSheet(); render();
+  };
+  $('#toggleCashPaid').onclick = ()=>{
+    s.cashPaid = !s.cashPaid;
+    syncSettlementStatus(s);
+    saveState(); renderSheet(); render();
+  };
 
   if (isEdit){
     $('#delSettlement')?.addEventListener('click', ()=>{
@@ -2544,16 +2587,6 @@ function renderSettlementSheet(id){
       saveState(); renderSheet(); render();
     });
 
-    $('#toggleCalculated').onclick = ()=>{
-      const next = !(s.markedCalculated || s.status === 'calculated');
-      s.markedCalculated = next;
-      s.status = next ? 'calculated' : 'draft';
-      saveState(); renderSheet(); render();
-    };
-    const invoiceToggle = $('#toggleInvoicePaid');
-    if (invoiceToggle) invoiceToggle.onclick = ()=>{ s.invoicePaid = !s.invoicePaid; saveState(); renderSheet(); render(); };
-    const cashToggle = $('#toggleCashPaid');
-    if (cashToggle) cashToggle.onclick = ()=>{ s.cashPaid = !s.cashPaid; saveState(); renderSheet(); render(); };
   }
 }
 
