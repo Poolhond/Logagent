@@ -136,6 +136,7 @@ function ensureUIPreferences(st){
   if (!("logPeriod" in st.ui)) st.ui.logPeriod = "all";
   if (!["7d", "30d", "90d", "all"].includes(st.ui.logPeriod)) st.ui.logPeriod = "all";
   if (!("editLogId" in st.ui)) st.ui.editLogId = null;
+  if (!st.ui.settlementEditModes) st.ui.settlementEditModes = {};
 }
 
 function ensureCoreProducts(st){
@@ -187,6 +188,7 @@ function loadState(){
     if (!s.status) s.status = "draft";
     if (!s.lines) s.lines = [];
     if (!s.logIds) s.logIds = [];
+    if (!("markedCalculated" in s)) s.markedCalculated = s.status === "calculated";
     if (!("invoicePaid" in s)) s.invoicePaid = false;
     if (!("cashPaid" in s)) s.cashPaid = false;
     if (!("demo" in s)) s.demo = false;
@@ -479,28 +481,46 @@ function getSettlementTotals(settlement){
   const invoiceTotals = bucketTotals(settlement.lines, "invoice");
   const cashTotals = bucketTotals(settlement.lines, "cash");
   return {
+    invoiceSubtotal: invoiceTotals.subtotal,
+    invoiceVat: invoiceTotals.vat,
     invoiceTotal: invoiceTotals.total,
+    cashSubtotal: cashTotals.subtotal,
     cashTotal: cashTotals.subtotal
   };
 }
+function getSettlementVisualState(settlement){
+  if (!settlement) return { state: "open", accentClass: "card-accent--open", navClass: "nav--linked" };
+  const totals = getSettlementTotals(settlement);
+  const invoiceUsed = totals.invoiceTotal > 0;
+  const cashUsed = totals.cashTotal > 0;
+  const invoicePaid = Boolean(settlement.invoicePaid);
+  const cashPaid = Boolean(settlement.cashPaid);
+
+  const paid = (
+    (invoiceUsed && !cashUsed && invoicePaid) ||
+    (cashUsed && !invoiceUsed && cashPaid) ||
+    (invoiceUsed && cashUsed && invoicePaid && cashPaid)
+  );
+
+  if (paid) return { state: "paid", accentClass: "card-accent--paid", navClass: "nav--paid" };
+  if (settlement.markedCalculated || settlement.status === "calculated"){
+    return { state: "calculated", accentClass: "card-accent--calculated", navClass: "nav--calculated" };
+  }
+  return { state: "open", accentClass: "card-accent--open", navClass: "nav--linked" };
+}
 function isSettlementPaid(settlement){
-  const { invoiceTotal, cashTotal } = getSettlementTotals(settlement);
-  const hasInvoice = invoiceTotal > 0;
-  const hasCash = cashTotal > 0;
-  return (!hasInvoice || settlement.invoicePaid)
-    && (!hasCash || settlement.cashPaid)
-    && (hasInvoice || hasCash);
+  return getSettlementVisualState(settlement).state === "paid";
 }
 function settlementColorClass(settlement){
-  return statusClassFromStatus(settlementVisualState(settlement));
+  return getSettlementVisualState(settlement).accentClass;
 }
 function settlementForLog(logId){
   return state.settlements.find(a => (a.logIds||[]).includes(logId)) || null;
 }
 function settlementVisualState(settlement){
-  if (!settlement) return "free";
-  if (isSettlementPaid(settlement)) return "paid";
-  if (settlement.status === "calculated") return "calculated";
+  const visual = getSettlementVisualState(settlement);
+  if (visual.state === "paid") return "paid";
+  if (visual.state === "calculated") return "calculated";
   return "linked";
 }
 function logStatus(logId){
@@ -581,7 +601,7 @@ function settlementPaymentState(settlement){
   const { invoiceTotal, cashTotal } = getSettlementTotals(settlement);
   const hasInvoice = invoiceTotal > 0;
   const hasCash = cashTotal > 0;
-  const isPaid = isSettlementPaid(settlement);
+  const isPaid = getSettlementVisualState(settlement).state === "paid";
   return { invoiceTotals, cashTotals, invoiceTotal, cashTotal, hasInvoice, hasCash, isPaid };
 }
 
@@ -745,6 +765,7 @@ function renderTopbar(){
   const active = currentView();
   const topbar = document.querySelector(".topbar");
   const subtitleEl = $("#topbarSubtitle");
+  const btnNew = $("#btnNewLog");
   topbar.classList.remove("nav--free", "nav--linked", "nav--calculated", "nav--paid");
   subtitleEl.classList.add("hidden");
   subtitleEl.textContent = "";
@@ -760,12 +781,27 @@ function renderTopbar(){
     } else {
       $("#topbarTitle").textContent = viewTitle(active);
     }
+  } else if (active.view === "settlementDetail"){
+    const settlement = state.settlements.find(x => x.id === active.id);
+    if (settlement){
+      const visual = getSettlementVisualState(settlement);
+      topbar.classList.add(visual.navClass);
+      $("#topbarTitle").textContent = cname(settlement.customerId);
+      subtitleEl.textContent = formatDatePretty(settlement.date);
+      subtitleEl.classList.remove("hidden");
+    } else {
+      $("#topbarTitle").textContent = viewTitle(active);
+    }
   } else {
     $("#topbarTitle").textContent = viewTitle(active);
   }
 
+  const root = ui.navStack[0]?.view || "logs";
   const showBack = ui.navStack.length > 1;
   $("#btnBack").classList.toggle("hidden", !showBack);
+  btnNew.classList.toggle("hidden", showBack || (root !== "logs" && root !== "settlements"));
+  btnNew.setAttribute("aria-label", root === "settlements" ? "Nieuwe afrekening" : "Nieuwe werklog");
+  btnNew.setAttribute("title", root === "settlements" ? "Nieuwe afrekening" : "Nieuwe werklog");
 }
 
 function setTab(key){
@@ -794,7 +830,34 @@ $("#nav-products").addEventListener("click", ()=>setTab("products"));
 $("#nav-settings").addEventListener("click", ()=>setTab("settings"));
 
 $("#btnBack").addEventListener("click", popView);
-$("#btnNewLog").addEventListener("click", ()=> pushView({ view: "newLog" }));
+$("#btnNewLog").addEventListener("click", ()=>{
+  const root = ui.navStack[0]?.view || "logs";
+  if (ui.navStack.length > 1) return;
+  if (root === "settlements"){
+    const s = createSettlement();
+    openSheet("settlement", s.id);
+    return;
+  }
+  pushView({ view: "newLog" });
+});
+
+function createSettlement(){
+  const s = {
+    id: uid(),
+    customerId: state.customers[0]?.id || "",
+    date: todayISO(),
+    createdAt: now(),
+    logIds: [],
+    lines: [],
+    status: "draft",
+    markedCalculated: false,
+    invoicePaid: false,
+    cashPaid: false
+  };
+  state.settlements.unshift(s);
+  saveState();
+  return s;
+}
 
 function startWorkLog(customerId){
   if (!customerId) return;
@@ -1194,26 +1257,46 @@ function renderSettlements(){
   const el = $("#tab-settlements");
   const list = [...state.settlements].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(s=>{
     const pay = settlementPaymentState(s);
-    const cls = settlementColorClass(s);
+    const visual = getSettlementVisualState(s);
+    const linkedLogs = (s.logIds||[])
+      .map(id => state.logs.find(l => l.id === id))
+      .filter(Boolean);
+    const totalMinutes = Math.floor(linkedLogs.reduce((acc, log) => acc + sumWorkMs(log), 0) / 60000);
     const grand = round2(pay.invoiceTotal + pay.cashTotal);
-    const invoicePillClass = s.invoicePaid ? "pill-paid" : "pill-open";
-    const cashPillClass = s.cashPaid ? "pill-paid" : "pill-open";
-    const meta = [esc(s.date || ""), `logs ${(s.logIds||[]).length}`].filter(Boolean).join(" • ");
 
-    const pills = [
-      pay.hasInvoice ? `<div class="pill ${invoicePillClass} mono">Factuur ${s.invoicePaid ? "paid" : "open"}</div>` : "",
-      pay.hasCash ? `<div class="pill ${cashPillClass} mono">Cash ${s.cashPaid ? "paid" : "open"}</div>` : ""
-    ].filter(Boolean).join("");
+    const indicator = (kind)=>{
+      const used = kind === "invoice" ? pay.hasInvoice : pay.hasCash;
+      if (!used) return '<span class="settlement-indicator is-hidden"></span>';
+      const isPaid = kind === "invoice" ? s.invoicePaid : s.cashPaid;
+      const icon = kind === "invoice"
+        ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"></path><path d="M15 3v3h3M9 11h6M9 15h6" stroke-linecap="round"></path></svg>`
+        : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="3"></rect><path d="M8 12h8" stroke-linecap="round"></path></svg>`;
+      return `<span class="settlement-indicator ${isPaid ? "is-paid" : "is-open"}" title="${kind === "invoice" ? "Factuur" : "Cash"}">${icon}${isPaid ? '<span class="indicator-check" aria-hidden="true"></span>' : ''}</span>`;
+    };
 
     return `
-      <div class="item item-compact settlement-row ${cls}" data-open-settlement="${s.id}">
+      <div class="item item-compact settlement-row ${visual.accentClass}" data-open-settlement="${s.id}">
         <div class="settlement-row-top">
           <div class="item-title">${esc(cname(s.customerId))}</div>
-          <div class="badge mono amount-badge">${fmtMoney(grand)}</div>
+          <div class="settlement-indicators">${indicator("invoice")}${indicator("cash")}</div>
         </div>
-        <div class="settlement-row-bottom">
-          <div class="item-sub mono">${meta}</div>
-          <div class="item-right settlement-pills">${pills}</div>
+        <div class="item-sub meta-row mono tabular">
+          <span>${esc(formatDatePretty(s.date))}</span>
+          <span aria-hidden="true">·</span>
+          <span class="meta-item">
+            <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"></path></svg>
+            <span>${(s.logIds||[]).length}</span>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span class="meta-item">
+            <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            <span>${formatDurationCompact(totalMinutes)}</span>
+          </span>
+          <span aria-hidden="true">·</span>
+          <span class="meta-item">
+            <svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h18l-2 10H5z"></path><path d="M8 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>
+            <span>${formatMoneyEUR(grand)}</span>
+          </span>
         </div>
       </div>
     `;
@@ -1221,33 +1304,9 @@ function renderSettlements(){
 
   el.innerHTML = `
     <div class="stack">
-      <div class="card stack">
-        <div class="row space">
-          <div class="item-title">Afrekenboek</div>
-          <button class="btn" id="btnNewSettlement">Nieuwe afrekening</button>
-        </div>
-        <div class="list">${list || `<div class="small">Nog geen afrekeningen.</div>`}</div>
-      </div>
+      <div class="list">${list || `<div class="small">Nog geen afrekeningen.</div>`}</div>
     </div>
   `;
-
-  $("#btnNewSettlement")?.addEventListener("click", ()=>{
-    // create empty settlement; user selects logs inside detail
-    const s = {
-      id: uid(),
-      customerId: state.customers[0]?.id || "",
-      date: todayISO(),
-      createdAt: now(),
-      logIds: [],
-      lines: [],
-      status: "draft",
-      invoicePaid: false,
-      cashPaid: false
-    };
-    state.settlements.unshift(s);
-    saveState();
-    openSheet("settlement", s.id);
-  });
 
   el.querySelectorAll("[data-open-settlement]").forEach(x=>{
     x.addEventListener("click", ()=> openSheet("settlement", x.getAttribute("data-open-settlement")));
@@ -1360,19 +1419,16 @@ function renderCustomerSheet(id){
         <div class="item-title">Afrekeningen</div>
         <div class="list">
           ${settlements.slice(0,20).map(s=>{
-            const paid = isSettlementPaid(s);
             const cls = settlementColorClass(s);
             const totInv = bucketTotals(s.lines,"invoice");
             const totCash = bucketTotals(s.lines,"cash");
             const grand = round2(totInv.total + totCash.subtotal);
-            const label = paid ? "betaald" : (s.status === "calculated" ? "berekend" : "draft/open");
             return `
               <div class="item ${cls}" data-open-settlement="${s.id}">
                 <div class="item-main">
-                  <div class="item-title">${esc(s.date)} • ${label}</div>
-                  <div class="item-sub mono">logs ${(s.logIds||[]).length} • totaal ${fmtMoney(grand)}</div>
+                  <div class="item-title">${esc(formatDatePretty(s.date))}</div>
+                  <div class="item-sub mono tabular">logs ${(s.logIds||[]).length} • totaal ${formatMoneyEUR(grand)}</div>
                 </div>
-                <div class="item-right"><span class="badge">${label}</span></div>
               </div>
             `;
           }).join("") || `<div class="small">Geen afrekeningen.</div>`}
@@ -1748,6 +1804,7 @@ function renderLogSheet(id){
         logIds: [log.id],
         lines: [],
         status: "draft",
+        markedCalculated: false,
         invoicePaid: false,
         cashPaid: false
       };
@@ -1871,11 +1928,11 @@ function renderSettlementSheet(id){
   if (!s){ closeSheet(); return; }
   if (!("invoicePaid" in s)) s.invoicePaid = false;
   if (!("cashPaid" in s)) s.cashPaid = false;
+  if (!("markedCalculated" in s)) s.markedCalculated = s.status === "calculated";
   ensureDefaultSettlementLines(s);
-  $('#sheetTitle').textContent = 'Afrekening';
 
+  const isEdit = Boolean(state.ui.settlementEditModes?.[s.id]);
   const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
-
   const availableLogs = state.logs
     .filter(l => l.customerId === s.customerId)
     .filter(log => {
@@ -1886,262 +1943,211 @@ function renderSettlementSheet(id){
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
   const pay = settlementPaymentState(s);
-  const invT = pay.invoiceTotals;
-  const cashT = pay.cashTotals;
-  const grand = round2(pay.invoiceTotal + pay.cashTotal);
+  const visual = getSettlementVisualState(s);
   const summary = settlementLogbookSummary(s);
-  const linkedAccentClass = pay.isPaid
-    ? "linked-log-accent-paid"
-    : (s.status === "calculated" ? "linked-log-accent-calculated" : "");
 
   $('#sheetActions').innerHTML = `
-    <button class="btn danger" id="delSettlement">Verwijder</button>
+    <button class="btn" id="toggleSettlementEdit">${isEdit ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg> Gereed` : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21l3.5-.8L19 7.7a1.8 1.8 0 0 0 0-2.5l-.2-.2a1.8 1.8 0 0 0-2.5 0L3.8 17.5z"></path><path d="M14 5l5 5"></path></svg> Bewerk`}</button>
+    ${isEdit ? `<button class="btn danger" id="delSettlement">Verwijder</button>` : ""}
   `;
 
   $('#sheetBody').innerHTML = `
-    <div class="stack">
-      <div class="card stack settlement-header-card">
-        <div class="row space settlement-header-top">
-          <div>
-            <div class="item-title">${esc(cname(s.customerId))}</div>
-            <div class="small mono">${esc(s.date)} • #${esc((s.id||'').slice(0,8))}</div>
-          </div>
-          <div class="rowtight settlement-header-toggles" role="group" aria-label="Afrekening status">
-            ${renderIconToggle({
-              id: "toggleCalculated",
-              active: s.status === "calculated",
-              variant: "calculated",
-              label: "Afrekening berekend",
-              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11h0M8 15h2M12 15h2M16 15h0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
-            })}
-            ${pay.hasInvoice ? renderIconToggle({
-              id: "toggleInvoicePaid",
-              active: s.invoicePaid,
-              variant: "paid",
-              label: "Factuur betaald",
-              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 3v3h3M9 11h6M9 15h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
-            }) : ""}
-            ${pay.hasCash ? renderIconToggle({
-              id: "toggleCashPaid",
-              active: s.cashPaid,
-              variant: "paid",
-              label: "Cash betaald",
-              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 12h6M12 9v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
-            }) : ""}
-          </div>
-        </div>
-
-        <div class="row settlement-meta-row">
-          <div style="flex:2; min-width:220px;">
-            <label>Klant</label>
-            <select id="sCustomer">${customerOptions}</select>
-          </div>
-          <div style="flex:1; min-width:160px;">
-            <label>Datum</label>
-            <input id="sDate" value="${esc(s.date||todayISO())}" />
-          </div>
-          <div class="badge mono">${pay.isPaid ? 'BETAALD' : 'OPEN'} • ${fmtMoney(grand)}</div>
-        </div>
+    <div class="stack settlement-detail ${visual.accentClass}">
+      <div class="card stack compact-card">
+        <div class="compact-row"><label>Klant</label><div>${isEdit ? `<select id="sCustomer">${customerOptions}</select>` : `<div class="tabular">${esc(cname(s.customerId))}</div>`}</div></div>
+        <div class="compact-row"><label>Datum</label><div>${isEdit ? `<input id="sDate" value="${esc(s.date||todayISO())}" />` : `<div class="tabular">${esc(formatDatePretty(s.date))}</div>`}</div></div>
       </div>
 
-      <div class="card stack">
-        <div class="row space">
-          <div class="item-title">Gekoppelde logs</div>
-        </div>
+      <div class="card stack compact-card">
+        <div class="row space"><div class="item-title">Gekoppelde logs</div>${isEdit ? `<button class="btn" id="btnRecalc">Herbereken uit logs</button>` : ""}</div>
         <div class="list" id="sLogs">
           ${availableLogs.slice(0,30).map(l=>{
-            const checked = (s.logIds||[]).includes(l.id) ? 'checked' : '';
-            const cls = linkedAccentClass;
-            return `
-              <label class="item item-compact ${cls}" style="cursor:pointer;">
-                <div class="item-main">
-                  <div class="item-title">${esc(l.date)} • ${durMsToHM(sumWorkMs(l))}</div>
-                  <div class="item-sub mono">Producten ${fmtMoney(sumItemsAmount(l))}</div>
-                </div>
-                <div class="item-right">
-                  <input type="checkbox" data-logpick="${l.id}" ${checked}/>
-                </div>
-              </label>
-            `;
-          }).join('') || `<div class="small">Geen beschikbare logs</div>`}
-        </div>
-        <button class="btn" id="btnRecalc">Herbereken uit logs</button>
-      </div>
-
-      <div class="card stack">
-        <div class="row space">
-          <div class="item-title">Logboek totaal</div>
-          <div class="small mono">${summary.linkedCount} logs</div>
-        </div>
-        <div class="row">
-          <div class="badge mono">Werkduur ${durMsToHM(summary.totalWorkMs)}</div>
-          <div class="badge mono">Productkosten ${fmtMoney(summary.totalProductCosts)}</div>
-          <div class="badge mono">Logboek prijs ${fmtMoney(summary.totalLogPrice)}</div>
+            const checked = (s.logIds||[]).includes(l.id);
+            const rowMeta = `
+              <div class="item-sub meta-row mono tabular">
+                <span>${esc(formatDatePretty(l.date))}</span>
+                <span aria-hidden="true">·</span>
+                <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round"></path></svg>${formatDurationCompact(Math.floor(sumWorkMs(l)/60000))}</span>
+                <span aria-hidden="true">·</span>
+                <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-2 10H5z"></path><path d="M8 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>${formatMoneyEUR(sumItemsAmount(l))}</span>
+              </div>`;
+            if (isEdit){
+              return `<label class="item item-compact"><div class="item-main">${rowMeta}</div><div class="item-right"><input type="checkbox" data-logpick="${l.id}" ${checked ? "checked" : ""}/></div></label>`;
+            }
+            if (!checked) return "";
+            return `<div class="item item-compact"><div class="item-main">${rowMeta}</div></div>`;
+          }).join('') || `<div class="small">Geen gekoppelde logs.</div>`}
         </div>
       </div>
 
-      <div class="card stack">
-        <div class="row space">
-          <div class="item-title">Factuur</div>
-          <div class="item-title mono">${fmtMoney(pay.invoiceTotal)}</div>
-        </div>
-        <div class="settlement-lines-wrap">
-          ${renderLinesTable(s, 'invoice')}
-        </div>
-        <div class="row settlement-line-actions">
-          <button class="btn" id="addInvoiceLine">+ lijn</button>
+      <div class="card stack compact-card">
+        <div class="item-title">Logboek totaal</div>
+        <div class="meta-row mono tabular">
+          <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round"></path></svg>${formatDurationCompact(Math.floor(summary.totalWorkMs/60000))}</span>
+          <span aria-hidden="true">·</span>
+          <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-2 10H5z"></path><path d="M8 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>${formatMoneyEUR(summary.totalProductCosts)}</span>
+          <span aria-hidden="true">·</span>
+          <span>${summary.linkedCount} logs</span>
         </div>
       </div>
 
-      <div class="card stack">
-        <div class="row space">
-          <div class="item-title">Cash</div>
-          <div class="item-title mono">${fmtMoney(pay.cashTotal)}</div>
-        </div>
-        <div class="settlement-lines-wrap">
-          ${renderLinesTable(s, 'cash')}
-        </div>
-        <div class="row settlement-line-actions">
-          <button class="btn" id="addCashLine">+ lijn</button>
+      <div class="card stack compact-card">
+        <div class="row space"><div class="item-title">Factuur</div><div class="mono tabular">${formatMoneyEUR(pay.invoiceTotal)}</div></div>
+        ${renderLinesTable(s, 'invoice', { readOnly: !isEdit })}
+        ${isEdit ? `<button class="btn" id="addInvoiceLine">+ regel</button>` : ""}
+      </div>
+
+      <div class="card stack compact-card">
+        <div class="row space"><div class="item-title">Cash</div><div class="mono tabular">${formatMoneyEUR(pay.cashTotal)}</div></div>
+        ${renderLinesTable(s, 'cash', { readOnly: !isEdit })}
+        ${isEdit ? `<button class="btn" id="addCashLine">+ regel</button>` : ""}
+      </div>
+
+      <div class="card stack compact-card">
+        <label>Notitie</label>
+        ${isEdit ? `<textarea id="sNote" rows="3">${esc(s.note||"")}</textarea>` : `<div class="small">${esc(s.note||"—")}</div>`}
+      </div>
+
+      <div class="card stack compact-card">
+        <div class="item-title">Status</div>
+        <div class="rowtight" role="group" aria-label="Afrekening status">
+          ${renderIconToggle({ id: "toggleCalculated", active: Boolean(s.markedCalculated || s.status === 'calculated'), variant: "neutral", label: "Afrekening berekend", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h3M13 12h3M8 16h8" stroke-linecap="round"></path></svg>` })}
+          ${pay.hasInvoice ? renderIconToggle({ id: "toggleInvoicePaid", active: s.invoicePaid, variant: "neutral", label: "Factuur betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 3h9l3 3v15H6z"></path><path d="M15 3v3h3M9 11h6M9 15h6" stroke-linecap="round"></path></svg>` }) : ""}
+          ${pay.hasCash ? renderIconToggle({ id: "toggleCashPaid", active: s.cashPaid, variant: "neutral", label: "Cash betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="6" width="18" height="12" rx="3"></rect><path d="M8 12h8" stroke-linecap="round"></path></svg>` }) : ""}
         </div>
       </div>
     </div>
   `;
 
-  $('#delSettlement').onclick = ()=>{
-    if (!confirmDelete(`Afrekening ${s.date} — ${cname(s.customerId)}`)) return;
-    state.settlements = state.settlements.filter(x => x.id !== s.id);
-    saveState(); closeSheet();
+  $('#toggleSettlementEdit').onclick = ()=>{
+    state.ui.settlementEditModes[s.id] = !isEdit;
+    saveState();
+    renderSheet();
   };
 
+  if (isEdit){
+    $('#delSettlement')?.addEventListener('click', ()=>{
+      if (!confirmDelete(`Afrekening ${formatDatePretty(s.date)} — ${cname(s.customerId)}`)) return;
+      state.settlements = state.settlements.filter(x => x.id !== s.id);
+      delete state.ui.settlementEditModes[s.id];
+      saveState();
+      closeSheet();
+    });
+
+    $('#sCustomer')?.addEventListener('change', ()=>{
+      s.customerId = $('#sCustomer').value;
+      s.logIds = [];
+      saveState(); renderSheet(); render();
+    });
+    $('#sDate')?.addEventListener('change', ()=>{
+      s.date = ($('#sDate').value||'').trim() || todayISO();
+      saveState(); renderSheet(); render();
+    });
+    $('#sNote')?.addEventListener('change', ()=>{
+      s.note = ($('#sNote').value || '').trim();
+      saveState(); render();
+    });
+
+    $('#sheetBody').querySelectorAll('[data-logpick]').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        const logId = cb.getAttribute('data-logpick');
+        const other = settlementForLog(logId);
+        if (other && other.id !== s.id){
+          alert('Deze log zit al in een andere afrekening. Open die afrekening of ontkoppel eerst.');
+          cb.checked = false;
+          return;
+        }
+        if (cb.checked) s.logIds = Array.from(new Set([...(s.logIds||[]), logId]));
+        else s.logIds = (s.logIds||[]).filter(x => x !== logId);
+        saveState(); renderSheet(); render();
+      });
+    });
+
+    $('#btnRecalc')?.addEventListener('click', ()=>{
+      const computed = computeSettlementFromLogs(s.customerId, s.logIds||[]);
+      const prev = new Map((s.lines||[]).map(li => [li.productId+'|'+li.description, li.bucket]));
+      s.lines = computed.lines.map(li => ({ ...li, bucket: prev.get(li.productId+'|'+li.description) || li.bucket }));
+      ensureDefaultSettlementLines(s);
+      saveState(); renderSheet(); render();
+    });
+
+    $('#sheetBody').querySelectorAll('[data-line-qty]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        const line = s.lines.find(x=>x.id===inp.getAttribute('data-line-qty'));
+        if (!line) return;
+        line.qty = Number(String(inp.value).replace(',', '.')||'0');
+        saveState(); renderSheet(); render();
+      });
+    });
+    $('#sheetBody').querySelectorAll('[data-line-price]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        const line = s.lines.find(x=>x.id===inp.getAttribute('data-line-price'));
+        if (!line) return;
+        line.unitPrice = Number(String(inp.value).replace(',', '.')||'0');
+        saveState(); renderSheet(); render();
+      });
+    });
+    $('#sheetBody').querySelectorAll('[data-line-del]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const lineId = btn.getAttribute('data-line-del');
+        if (!confirmDelete('Regel verwijderen')) return;
+        s.lines = (s.lines||[]).filter(x=>x.id!==lineId);
+        saveState(); renderSheet(); render();
+      });
+    });
+    $('#sheetBody').querySelectorAll('[data-line-product]').forEach(sel=>{
+      sel.addEventListener('change', ()=>{
+        const line = s.lines.find(x=>x.id===sel.getAttribute('data-line-product'));
+        if (!line) return;
+        const productId = sel.value || null;
+        const product = productId ? getProduct(productId) : null;
+        line.productId = productId;
+        if (product){
+          line.name = product.name;
+          line.description = product.name;
+          line.unitPrice = Number(product.unitPrice || 0);
+          if ((line.bucket || 'invoice') === 'invoice') line.vatRate = Number(product.vatRate ?? 0.21);
+        }
+        saveState(); renderSheet(); render();
+      });
+    });
+
+    $('#addInvoiceLine')?.addEventListener('click', ()=>{
+      addSettlementLine(s, 'invoice');
+      saveState(); renderSheet(); render();
+    });
+    $('#addCashLine')?.addEventListener('click', ()=>{
+      addSettlementLine(s, 'cash');
+      saveState(); renderSheet(); render();
+    });
+  }
+
   $('#toggleCalculated').onclick = ()=>{
-    const next = s.status !== 'calculated';
-    if (!confirmAction(next ? 'Markeren als berekend?' : 'Terug naar open?')) return;
+    const next = !(s.markedCalculated || s.status === 'calculated');
+    s.markedCalculated = next;
     s.status = next ? 'calculated' : 'draft';
     saveState(); renderSheet(); render();
   };
-
   const invoiceToggle = $('#toggleInvoicePaid');
-  if (invoiceToggle){
-    invoiceToggle.onclick = ()=>{
-      const next = !s.invoicePaid;
-      if (!confirmAction(next ? 'Factuur als betaald?' : 'Factuur terug open?')) return;
-      s.invoicePaid = next;
-      saveState(); renderSheet(); render();
-    };
-  }
-
+  if (invoiceToggle) invoiceToggle.onclick = ()=>{ s.invoicePaid = !s.invoicePaid; saveState(); renderSheet(); render(); };
   const cashToggle = $('#toggleCashPaid');
-  if (cashToggle){
-    cashToggle.onclick = ()=>{
-      const next = !s.cashPaid;
-      if (!confirmAction(next ? 'Cash als betaald?' : 'Cash terug open?')) return;
-      s.cashPaid = next;
-      saveState(); renderSheet(); render();
-    };
-  }
-
-  $('#sCustomer').onchange = ()=>{
-    s.customerId = $('#sCustomer').value;
-    s.logIds = [];
-    saveState(); renderSheet(); render();
-  };
-  $('#sDate').onchange = ()=>{
-    s.date = ($('#sDate').value||'').trim() || todayISO();
-    saveState(); renderSheet(); render();
-  };
-
-  $('#sheetBody').querySelectorAll('[data-logpick]').forEach(cb=>{
-    cb.addEventListener('change', ()=>{
-      const logId = cb.getAttribute('data-logpick');
-      const other = settlementForLog(logId);
-      if (other && other.id !== s.id){
-        alert('Deze log zit al in een andere afrekening. Open die afrekening of ontkoppel eerst.');
-        cb.checked = false;
-        return;
-      }
-      if (cb.checked) s.logIds = Array.from(new Set([...(s.logIds||[]), logId]));
-      else s.logIds = (s.logIds||[]).filter(x => x !== logId);
-      saveState(); renderSheet(); render();
-    });
-  });
-
-  $('#btnRecalc').onclick = ()=>{
-    const computed = computeSettlementFromLogs(s.customerId, s.logIds||[]);
-    const prev = new Map((s.lines||[]).map(li => [li.productId+'|'+li.description, li.bucket]));
-    s.lines = computed.lines.map(li => ({ ...li, bucket: prev.get(li.productId+'|'+li.description) || li.bucket }));
-    saveState(); renderSheet(); render();
-  };
-
-  $('#sheetBody').querySelectorAll('[data-line-qty]').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
-      const lineId = inp.getAttribute('data-line-qty');
-      const line = s.lines.find(x=>x.id===lineId);
-      if (!line) return;
-      line.qty = Number(String(inp.value).replace(',', '.')||'0');
-      saveState(); renderSheet(); render();
-    });
-  });
-  $('#sheetBody').querySelectorAll('[data-line-price]').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
-      const lineId = inp.getAttribute('data-line-price');
-      const line = s.lines.find(x=>x.id===lineId);
-      if (!line) return;
-      line.unitPrice = Number(String(inp.value).replace(',', '.')||'0');
-      saveState(); renderSheet(); render();
-    });
-  });
-  $('#sheetBody').querySelectorAll('[data-line-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const lineId = btn.getAttribute('data-line-del');
-      if (!confirmDelete('Regel verwijderen')) return;
-      s.lines = (s.lines||[]).filter(x=>x.id!==lineId);
-      saveState(); renderSheet(); render();
-    });
-  });
-
-  $('#sheetBody').querySelectorAll('[data-line-product]').forEach(sel=>{
-    sel.addEventListener('change', ()=>{
-      const lineId = sel.getAttribute('data-line-product');
-      const line = s.lines.find(x=>x.id===lineId);
-      if (!line) return;
-      const productId = sel.value || null;
-      const product = productId ? getProduct(productId) : null;
-      line.productId = productId;
-      if (product){
-        line.name = product.name;
-        line.description = product.name;
-        line.unitPrice = Number(product.unitPrice || 0);
-        if ((line.bucket || 'invoice') === 'invoice') line.vatRate = Number(product.vatRate ?? 0.21);
-      }
-      saveState(); renderSheet(); render();
-    });
-  });
-
-  $('#addInvoiceLine').onclick = ()=>{
-    addSettlementLine(s, 'invoice');
-    saveState(); renderSheet(); render();
-  };
-  $('#addCashLine').onclick = ()=>{
-    addSettlementLine(s, 'cash');
-    saveState(); renderSheet(); render();
-  };
+  if (cashToggle) cashToggle.onclick = ()=>{ s.cashPaid = !s.cashPaid; saveState(); renderSheet(); render(); };
 }
 
-function renderLinesTable(settlement, bucket){
+function renderLinesTable(settlement, bucket, { readOnly = false } = {}){
   const lines = (settlement.lines||[]).filter(l => (l.bucket||'invoice')===bucket);
   const totals = settlementTotals(settlement);
   const footer = bucket === 'invoice'
     ? `
-      <div class="settlement-lines-footer mono">
-        <div>Subtotaal</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceSubtotal)}</div><div></div>
-        <div>BTW 21%</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceVat)}</div><div></div>
-        <div>Totaal</div><div></div><div></div><div class="num">${fmtMoney(totals.invoiceTotal)}</div><div></div>
+      <div class="settlement-lines-footer mono tabular">
+        <div>Subtotaal</div><div></div><div></div><div class="num">${formatMoneyEUR(totals.invoiceSubtotal)}</div><div></div>
+        <div>BTW 21%</div><div></div><div></div><div class="num">${formatMoneyEUR(totals.invoiceVat)}</div><div></div>
+        <div>Totaal</div><div></div><div></div><div class="num">${formatMoneyEUR(totals.invoiceTotal)}</div><div></div>
       </div>
     `
     : `
-      <div class="settlement-lines-footer mono">
-        <div>Totaal</div><div></div><div></div><div class="num">${fmtMoney(totals.cashTotal)}</div><div></div>
+      <div class="settlement-lines-footer mono tabular">
+        <div>Totaal</div><div></div><div></div><div class="num">${formatMoneyEUR(totals.cashTotal)}</div><div></div>
       </div>
     `;
 
@@ -2156,19 +2162,14 @@ function renderLinesTable(settlement, bucket){
         return `
           <div class="settlement-lines-grid settlement-lines-row">
             <div>
-              <select class="settlement-cell-input" data-line-product="${l.id}">
-                <option value="">Kies product</option>
-                ${state.products.map(p=>`<option value="${p.id}" ${p.id===productValue?"selected":""}>${esc(p.name)}${p.unit ? ` (${esc(p.unit)})` : ''}</option>`).join('')}
-              </select>
+              ${readOnly
+                ? `<div class="settlement-cell-readonly">${esc((getProduct(productValue)?.name) || l.name || l.description || '—')}</div>`
+                : `<select class="settlement-cell-input" data-line-product="${l.id}"><option value="">Kies product</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===productValue?"selected":""}>${esc(p.name)}${p.unit ? ` (${esc(p.unit)})` : ''}</option>`).join('')}</select>`}
             </div>
-            <div><input class="settlement-cell-input mono" data-line-qty="${l.id}" inputmode="decimal" value="${esc((l.qty ?? '') === 0 ? '' : String(l.qty ?? ''))}" /></div>
-            <div><input class="settlement-cell-input mono" data-line-price="${l.id}" inputmode="decimal" value="${esc((l.unitPrice ?? '') === 0 ? '' : String(l.unitPrice ?? ''))}" /></div>
-            <div class="num mono">${fmtMoney(rowTotal)}</div>
-            <div>
-              <button class="iconbtn settlement-trash" data-line-del="${l.id}" title="Verwijder">
-                <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              </button>
-            </div>
+            <div>${readOnly ? `<div class="settlement-cell-readonly mono tabular">${esc((l.qty ?? '') === '' ? '—' : String(l.qty))}</div>` : `<input class="settlement-cell-input mono tabular" data-line-qty="${l.id}" inputmode="decimal" value="${esc((l.qty ?? '') === 0 ? '' : String(l.qty ?? ''))}" />`}</div>
+            <div>${readOnly ? `<div class="settlement-cell-readonly mono tabular">${formatMoneyEUR(Number(l.unitPrice)||0)}</div>` : `<input class="settlement-cell-input mono tabular" data-line-price="${l.id}" inputmode="decimal" value="${esc((l.unitPrice ?? '') === 0 ? '' : String(l.unitPrice ?? ''))}" />`}</div>
+            <div class="num mono tabular">${formatMoneyEUR(rowTotal)}</div>
+            <div>${readOnly ? '' : `<button class="iconbtn settlement-trash" data-line-del="${l.id}" title="Verwijder"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18" stroke-linecap="round"/><path d="M8 6V4h8v2"/><path d="M6 6l1 16h10l1-16"/><path d="M10 11v6M14 11v6" stroke-linecap="round"/></svg></button>`}</div>
           </div>
         `;
       }).join('')) || `<div class="small">Geen regels</div>`}
