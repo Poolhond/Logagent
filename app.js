@@ -136,7 +136,22 @@ function ensureUIPreferences(st){
   if (!("logPeriod" in st.ui)) st.ui.logPeriod = "all";
   if (!["7d", "30d", "90d", "all"].includes(st.ui.logPeriod)) st.ui.logPeriod = "all";
   if (!("editLogId" in st.ui)) st.ui.editLogId = null;
-  if (!st.ui.settlementEditModes) st.ui.settlementEditModes = {};
+  if (!("editSettlementId" in st.ui)) st.ui.editSettlementId = null;
+  if (st.ui.settlementEditModes && !st.ui.editSettlementId){
+    const activeId = Object.entries(st.ui.settlementEditModes).find(([, isEditing]) => Boolean(isEditing))?.[0] || null;
+    st.ui.editSettlementId = activeId;
+  }
+  delete st.ui.settlementEditModes;
+}
+
+function isSettlementEditing(settlementId){
+  return state.ui.editSettlementId === settlementId;
+}
+
+function toggleEditSettlement(settlementId){
+  state.ui.editSettlementId = state.ui.editSettlementId === settlementId ? null : settlementId;
+  saveState();
+  render();
 }
 
 function ensureCoreProducts(st){
@@ -769,6 +784,7 @@ function renderTopbar(){
   topbar.classList.remove("nav--free", "nav--linked", "nav--calculated", "nav--paid");
   subtitleEl.classList.add("hidden");
   subtitleEl.textContent = "";
+  btnNew.classList.remove("topbar-edit");
 
   if (active.view === "logDetail"){
     const log = state.logs.find(x => x.id === active.id);
@@ -798,7 +814,24 @@ function renderTopbar(){
 
   const root = ui.navStack[0]?.view || "logs";
   const showBack = ui.navStack.length > 1;
+  const isSettlementDetail = active.view === "settlementDetail";
+  const settlement = isSettlementDetail ? state.settlements.find(x => x.id === active.id) : null;
+  const isEdit = settlement ? isSettlementEditing(settlement.id) : false;
+
   $("#btnBack").classList.toggle("hidden", !showBack);
+
+  if (isSettlementDetail && settlement){
+    btnNew.classList.remove("hidden");
+    btnNew.classList.add("topbar-edit");
+    btnNew.innerHTML = isEdit
+      ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg><span id="btnTopbarActionLabel">Gereed</span>`
+      : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21l3.5-.8L19 7.7a1.8 1.8 0 0 0 0-2.5l-.2-.2a1.8 1.8 0 0 0-2.5 0L3.8 17.5z"></path><path d="M14 5l5 5"></path></svg><span id="btnTopbarActionLabel">Bewerk</span>`;
+    btnNew.setAttribute("aria-label", isEdit ? "Gereed" : "Bewerk");
+    btnNew.setAttribute("title", isEdit ? "Gereed" : "Bewerk");
+    return;
+  }
+
+  btnNew.innerHTML = `<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
   btnNew.classList.toggle("hidden", showBack || (root !== "logs" && root !== "settlements"));
   btnNew.setAttribute("aria-label", root === "settlements" ? "Nieuwe afrekening" : "Nieuwe werklog");
   btnNew.setAttribute("title", root === "settlements" ? "Nieuwe afrekening" : "Nieuwe werklog");
@@ -830,7 +863,14 @@ $("#nav-products").addEventListener("click", ()=>setTab("products"));
 $("#nav-settings").addEventListener("click", ()=>setTab("settings"));
 
 $("#btnBack").addEventListener("click", popView);
-$("#btnNewLog").addEventListener("click", ()=>{
+$("#btnNewLog").onclick = ()=>{
+  const active = currentView();
+  if (active.view === "settlementDetail"){
+    const settlement = state.settlements.find(x => x.id === active.id);
+    if (!settlement) return;
+    toggleEditSettlement(settlement.id);
+    return;
+  }
   const root = ui.navStack[0]?.view || "logs";
   if (ui.navStack.length > 1) return;
   if (root === "settlements"){
@@ -839,7 +879,7 @@ $("#btnNewLog").addEventListener("click", ()=>{
     return;
   }
   pushView({ view: "newLog" });
-});
+};
 
 function createSettlement(){
   const s = {
@@ -1931,7 +1971,7 @@ function renderSettlementSheet(id){
   if (!("markedCalculated" in s)) s.markedCalculated = s.status === "calculated";
   ensureDefaultSettlementLines(s);
 
-  const isEdit = Boolean(state.ui.settlementEditModes?.[s.id]);
+  const isEdit = isSettlementEditing(s.id);
   const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
   const availableLogs = state.logs
     .filter(l => l.customerId === s.customerId)
@@ -1946,20 +1986,12 @@ function renderSettlementSheet(id){
   const visual = getSettlementVisualState(s);
   const summary = settlementLogbookSummary(s);
 
-  $('#sheetActions').innerHTML = `
-    <button class="btn" id="toggleSettlementEdit">${isEdit ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg> Gereed` : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21l3.5-.8L19 7.7a1.8 1.8 0 0 0 0-2.5l-.2-.2a1.8 1.8 0 0 0-2.5 0L3.8 17.5z"></path><path d="M14 5l5 5"></path></svg> Bewerk`}</button>
-    ${isEdit ? `<button class="btn danger" id="delSettlement">Verwijder</button>` : ""}
-  `;
+  $('#sheetActions').innerHTML = '';
 
   $('#sheetBody').innerHTML = `
     <div class="stack settlement-detail ${visual.accentClass}">
       <div class="card stack compact-card">
-        <div class="compact-row"><label>Klant</label><div>${isEdit ? `<select id="sCustomer">${customerOptions}</select>` : `<div class="tabular">${esc(cname(s.customerId))}</div>`}</div></div>
-        <div class="compact-row"><label>Datum</label><div>${isEdit ? `<input id="sDate" value="${esc(s.date||todayISO())}" />` : `<div class="tabular">${esc(formatDatePretty(s.date))}</div>`}</div></div>
-      </div>
-
-      <div class="card stack compact-card">
-        <div class="row space"><div class="item-title">Gekoppelde logs</div>${isEdit ? `<button class="btn" id="btnRecalc">Herbereken uit logs</button>` : ""}</div>
+        <div class="row space"><h2>Gekoppelde logs</h2>${isEdit ? `<button class="btn" id="btnRecalc">Herbereken uit logs</button>` : ""}</div>
         <div class="list" id="sLogs">
           ${availableLogs.slice(0,30).map(l=>{
             const checked = (s.logIds||[]).includes(l.id);
@@ -1981,55 +2013,53 @@ function renderSettlementSheet(id){
       </div>
 
       <div class="card stack compact-card">
-        <div class="item-title">Logboek totaal</div>
+        <h2>Logboek totaal</h2>
         <div class="meta-row mono tabular">
           <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2" stroke-linecap="round"></path></svg>${formatDurationCompact(Math.floor(summary.totalWorkMs/60000))}</span>
           <span aria-hidden="true">·</span>
           <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18l-2 10H5z"></path><path d="M8 7V5.5a3 3 0 0 1 6 0V7" stroke-linecap="round"></path></svg>${formatMoneyEUR(summary.totalProductCosts)}</span>
           <span aria-hidden="true">·</span>
-          <span>${summary.linkedCount} logs</span>
+          <span class="meta-item"><svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"></path></svg>${summary.linkedCount}</span>
         </div>
       </div>
 
       <div class="card stack compact-card">
-        <div class="row space"><div class="item-title">Factuur</div><div class="mono tabular">${formatMoneyEUR(pay.invoiceTotal)}</div></div>
+        <div class="row space"><h2>Factuur</h2><div class="mono tabular">${formatMoneyEUR(pay.invoiceTotal)}</div></div>
         ${renderLinesTable(s, 'invoice', { readOnly: !isEdit })}
         ${isEdit ? `<button class="btn" id="addInvoiceLine">+ regel</button>` : ""}
       </div>
 
       <div class="card stack compact-card">
-        <div class="row space"><div class="item-title">Cash</div><div class="mono tabular">${formatMoneyEUR(pay.cashTotal)}</div></div>
+        <div class="row space"><h2>Cash</h2><div class="mono tabular">${formatMoneyEUR(pay.cashTotal)}</div></div>
         ${renderLinesTable(s, 'cash', { readOnly: !isEdit })}
         ${isEdit ? `<button class="btn" id="addCashLine">+ regel</button>` : ""}
       </div>
 
       <div class="card stack compact-card">
-        <label>Notitie</label>
+        <h2>Notitie</h2>
         ${isEdit ? `<textarea id="sNote" rows="3">${esc(s.note||"")}</textarea>` : `<div class="small">${esc(s.note||"—")}</div>`}
       </div>
 
+      ${isEdit ? `
       <div class="card stack compact-card">
-        <div class="item-title">Status</div>
+        <h2>Acties</h2>
+        <div class="compact-row"><label>Klant</label><div><select id="sCustomer">${customerOptions}</select></div></div>
+        <div class="compact-row"><label>Datum</label><div><input id="sDate" type="date" value="${esc(s.date||todayISO())}" /></div></div>
         <div class="rowtight" role="group" aria-label="Afrekening status">
           ${renderIconToggle({ id: "toggleCalculated", active: Boolean(s.markedCalculated || s.status === 'calculated'), variant: "neutral", label: "Afrekening berekend", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="3" width="16" height="18" rx="2"></rect><path d="M8 8h8M8 12h3M13 12h3M8 16h8" stroke-linecap="round"></path></svg>` })}
           ${pay.hasInvoice ? renderIconToggle({ id: "toggleInvoicePaid", active: s.invoicePaid, variant: "neutral", label: "Factuur betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 3h9l3 3v15H6z"></path><path d="M15 3v3h3M9 11h6M9 15h6" stroke-linecap="round"></path></svg>` }) : ""}
           ${pay.hasCash ? renderIconToggle({ id: "toggleCashPaid", active: s.cashPaid, variant: "neutral", label: "Cash betaald", icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="6" width="18" height="12" rx="3"></rect><path d="M8 12h8" stroke-linecap="round"></path></svg>` }) : ""}
         </div>
-      </div>
+        <button class="btn danger" id="delSettlement">Verwijder</button>
+      </div>` : ""}
     </div>
   `;
-
-  $('#toggleSettlementEdit').onclick = ()=>{
-    state.ui.settlementEditModes[s.id] = !isEdit;
-    saveState();
-    renderSheet();
-  };
 
   if (isEdit){
     $('#delSettlement')?.addEventListener('click', ()=>{
       if (!confirmDelete(`Afrekening ${formatDatePretty(s.date)} — ${cname(s.customerId)}`)) return;
       state.settlements = state.settlements.filter(x => x.id !== s.id);
-      delete state.ui.settlementEditModes[s.id];
+      if (state.ui.editSettlementId === s.id) state.ui.editSettlementId = null;
       saveState();
       closeSheet();
     });
@@ -2120,18 +2150,18 @@ function renderSettlementSheet(id){
       addSettlementLine(s, 'cash');
       saveState(); renderSheet(); render();
     });
-  }
 
-  $('#toggleCalculated').onclick = ()=>{
-    const next = !(s.markedCalculated || s.status === 'calculated');
-    s.markedCalculated = next;
-    s.status = next ? 'calculated' : 'draft';
-    saveState(); renderSheet(); render();
-  };
-  const invoiceToggle = $('#toggleInvoicePaid');
-  if (invoiceToggle) invoiceToggle.onclick = ()=>{ s.invoicePaid = !s.invoicePaid; saveState(); renderSheet(); render(); };
-  const cashToggle = $('#toggleCashPaid');
-  if (cashToggle) cashToggle.onclick = ()=>{ s.cashPaid = !s.cashPaid; saveState(); renderSheet(); render(); };
+    $('#toggleCalculated').onclick = ()=>{
+      const next = !(s.markedCalculated || s.status === 'calculated');
+      s.markedCalculated = next;
+      s.status = next ? 'calculated' : 'draft';
+      saveState(); renderSheet(); render();
+    };
+    const invoiceToggle = $('#toggleInvoicePaid');
+    if (invoiceToggle) invoiceToggle.onclick = ()=>{ s.invoicePaid = !s.invoicePaid; saveState(); renderSheet(); render(); };
+    const cashToggle = $('#toggleCashPaid');
+    if (cashToggle) cashToggle.onclick = ()=>{ s.cashPaid = !s.cashPaid; saveState(); renderSheet(); render(); };
+  }
 }
 
 function renderLinesTable(settlement, bucket, { readOnly = false } = {}){
