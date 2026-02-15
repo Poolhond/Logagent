@@ -548,9 +548,6 @@ function renderLogCard(log){
         <div class="item-title">${esc(cname(log.customerId))}</div>
         ${metaRow}
       </div>
-      <div class="item-right">
-        <span class="badge">${st==="free" ? "vrij" : (st==="linked"?"gekoppeld":st==="calculated"?"berekend":"betaald")}</span>
-      </div>
     </div>
   `;
 }
