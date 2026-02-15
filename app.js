@@ -410,6 +410,12 @@ function settlementColorClass(settlement){
 function settlementForLog(logId){
   return state.settlements.find(a => (a.logIds||[]).includes(logId)) || null;
 }
+function isLogLinkedElsewhere(logId, currentSettlementId){
+  return state.settlements.some(s =>
+    s.id !== currentSettlementId &&
+    (s.logIds || []).includes(logId)
+  );
+}
 function getWorkLogStatus(logId){
   const af = settlementForLog(logId);
   if (!af) return "free";
@@ -1384,8 +1390,13 @@ function renderSettlementSheet(id){
 
   const customerOptions = state.customers.map(c => `<option value="${c.id}" ${c.id===s.customerId?"selected":""}>${esc(c.nickname||c.name||"Klant")}</option>`).join('');
 
-  const customerLogs = state.logs
+  const availableLogs = state.logs
     .filter(l => l.customerId === s.customerId)
+    .filter(log => {
+      const isInThisSettlement = (s.logIds || []).includes(log.id);
+      const linkedElsewhere = isLogLinkedElsewhere(log.id, s.id);
+      return isInThisSettlement || !linkedElsewhere;
+    })
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
   const pay = settlementPaymentState(s);
@@ -1454,7 +1465,7 @@ function renderSettlementSheet(id){
           <div class="item-title">Gekoppelde logs</div>
         </div>
         <div class="list" id="sLogs">
-          ${customerLogs.slice(0,30).map(l=>{
+          ${availableLogs.slice(0,30).map(l=>{
             const checked = (s.logIds||[]).includes(l.id) ? 'checked' : '';
             const cls = linkedAccentClass;
             return `
@@ -1468,7 +1479,7 @@ function renderSettlementSheet(id){
                 </div>
               </label>
             `;
-          }).join('') || `<div class="small">Geen logs.</div>`}
+          }).join('') || `<div class="small">Geen beschikbare logs</div>`}
         </div>
         <button class="btn" id="btnRecalc">Herbereken uit logs</button>
       </div>
