@@ -119,22 +119,35 @@ function defaultState(){
     logs: [],
     settlements: [],
     activeLogId: null,
-    ui: {
-      logFilter: "open",
-      showLogFilters: false,
-      logCustomerId: "all",
-      logPeriod: "all"
+    ui: {},
+    logbook: {
+      statusFilter: "open",
+      showFilters: false,
+      customerId: "all",
+      period: "all",
+      groupBy: "date",
+      sortDir: "desc"
     }
   };
 }
 
 function ensureUIPreferences(st){
   st.ui = st.ui || {};
-  if (!["open", "paid", "all"].includes(st.ui.logFilter)) st.ui.logFilter = "open";
-  if (!("showLogFilters" in st.ui)) st.ui.showLogFilters = false;
-  if (!("logCustomerId" in st.ui)) st.ui.logCustomerId = "all";
-  if (!("logPeriod" in st.ui)) st.ui.logPeriod = "all";
-  if (!["7d", "30d", "90d", "all"].includes(st.ui.logPeriod)) st.ui.logPeriod = "all";
+  st.logbook = st.logbook || {};
+
+  if (!["open", "paid", "all"].includes(st.logbook.statusFilter)){
+    st.logbook.statusFilter = ["open", "paid", "all"].includes(st.ui.logFilter) ? st.ui.logFilter : "open";
+  }
+  if (!("showFilters" in st.logbook)) st.logbook.showFilters = Boolean(st.ui.showLogFilters);
+  if (!("customerId" in st.logbook)) st.logbook.customerId = st.ui.logCustomerId || "all";
+  if (!("period" in st.logbook)){
+    const legacyMap = { "7d": "week", "30d": "30d", "90d": "month", "all": "all" };
+    st.logbook.period = legacyMap[st.ui.logPeriod] || "all";
+  }
+  if (!["all", "week", "month", "30d"].includes(st.logbook.period)) st.logbook.period = "all";
+  if (!["date", "customer", "workTime", "productTotal", "status"].includes(st.logbook.groupBy)) st.logbook.groupBy = "date";
+  if (!["desc", "asc"].includes(st.logbook.sortDir)) st.logbook.sortDir = "desc";
+
   if (!("editLogId" in st.ui)) st.ui.editLogId = null;
   if (!("editSettlementId" in st.ui)) st.ui.editSettlementId = null;
   if (st.ui.settlementEditModes && !st.ui.editSettlementId){
@@ -142,6 +155,10 @@ function ensureUIPreferences(st){
     st.ui.editSettlementId = activeId;
   }
   delete st.ui.settlementEditModes;
+  delete st.ui.logFilter;
+  delete st.ui.showLogFilters;
+  delete st.ui.logCustomerId;
+  delete st.ui.logPeriod;
 }
 
 function isSettlementEditing(settlementId){
@@ -986,13 +1003,133 @@ function render(){
   ui.transition = null;
 }
 
+function getLogbookPeriodStart(period){
+  const current = new Date();
+  if (period === "week"){
+    const d = new Date(current);
+    const offset = (d.getDay() + 6) % 7;
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate() - offset);
+    return d.getTime();
+  }
+  if (period === "month"){
+    return new Date(current.getFullYear(), current.getMonth(), 1).getTime();
+  }
+  if (period === "30d"){
+    return now() - (30 * 86400000);
+  }
+  return null;
+}
+
+function logStatusBucket(status){
+  if (status === "paid") return "paid";
+  if (status === "calculated") return "calculated";
+  return "open";
+}
+
+function logStatusLabel(status){
+  const bucket = logStatusBucket(status);
+  if (bucket === "paid") return "Betaald";
+  if (bucket === "calculated") return "Berekend";
+  return "Open";
+}
+
+function compareByDirection(a, b, dir){
+  return dir === "asc" ? (a > b ? 1 : a < b ? -1 : 0) : (a < b ? 1 : a > b ? -1 : 0);
+}
+
+function applyFiltersAndSort(logs){
+  const cfg = state.logbook || {};
+  const statusFilter = cfg.statusFilter || "open";
+  const customerId = cfg.customerId || "all";
+  const period = cfg.period || "all";
+  const groupBy = cfg.groupBy || "date";
+  const sortDir = cfg.sortDir || "desc";
+  const minTimestamp = getLogbookPeriodStart(period);
+
+  const filtered = logs.filter(log => {
+    const status = getWorkLogStatus(log.id);
+    const isPaid = status === "paid";
+    if (statusFilter === "open" && isPaid) return false;
+    if (statusFilter === "paid" && !isPaid) return false;
+    if (customerId !== "all" && log.customerId !== customerId) return false;
+
+    if (minTimestamp != null){
+      const ts = log.createdAt || new Date(`${log.date}T00:00:00`).getTime();
+      if (Number.isFinite(ts) && ts < minTimestamp) return false;
+    }
+    return true;
+  });
+
+  const decorated = filtered.map(log => ({
+    log,
+    status: getWorkLogStatus(log.id),
+    customer: cname(log.customerId),
+    dateValue: log.createdAt || new Date(`${log.date}T00:00:00`).getTime() || 0,
+    workTimeValue: sumWorkMs(log),
+    productValue: sumItemsAmount(log)
+  }));
+
+  decorated.sort((a,b) => {
+    if (groupBy === "customer"){
+      const byCustomer = compareByDirection(a.customer.localeCompare(b.customer, "nl"), 0, sortDir);
+      if (byCustomer !== 0) return byCustomer;
+      return compareByDirection(a.dateValue, b.dateValue, "desc");
+    }
+    if (groupBy === "workTime"){
+      const byWork = compareByDirection(a.workTimeValue, b.workTimeValue, sortDir);
+      if (byWork !== 0) return byWork;
+      return compareByDirection(a.dateValue, b.dateValue, "desc");
+    }
+    if (groupBy === "productTotal"){
+      const byProduct = compareByDirection(a.productValue, b.productValue, sortDir);
+      if (byProduct !== 0) return byProduct;
+      return compareByDirection(a.dateValue, b.dateValue, "desc");
+    }
+    if (groupBy === "status"){
+      const order = { open: 0, calculated: 1, paid: 2 };
+      const byStatus = compareByDirection(order[logStatusBucket(a.status)] ?? 0, order[logStatusBucket(b.status)] ?? 0, sortDir);
+      if (byStatus !== 0) return byStatus;
+      return compareByDirection(a.dateValue, b.dateValue, "desc");
+    }
+    return compareByDirection(a.dateValue, b.dateValue, sortDir);
+  });
+
+  if (groupBy === "workTime" || groupBy === "productTotal"){
+    return [{ header: "", logs: decorated.map(x => x.log) }];
+  }
+
+  const grouped = new Map();
+  for (const item of decorated){
+    let key = "all";
+    let header = "";
+    if (groupBy === "date"){
+      key = item.log.date;
+      header = formatLogDatePretty(item.log.date);
+    } else if (groupBy === "customer"){
+      key = item.log.customerId || "unknown";
+      header = item.customer;
+    } else if (groupBy === "status"){
+      key = logStatusBucket(item.status);
+      header = logStatusLabel(item.status);
+    }
+
+    if (!grouped.has(key)) grouped.set(key, { header, logs: [] });
+    grouped.get(key).logs.push(item.log);
+  }
+  return [...grouped.values()];
+}
+
 function renderLogs(){
   const el = $("#tab-logs");
   const active = state.activeLogId ? state.logs.find(l => l.id === state.activeLogId) : null;
-  const logFilter = state.ui.logFilter || "open";
-  const showLogFilters = !!state.ui.showLogFilters;
-  const logCustomerId = state.ui.logCustomerId || "all";
-  const logPeriod = state.ui.logPeriod || "all";
+  const logbook = state.logbook || {};
+  const statusFilter = logbook.statusFilter || "open";
+  const showFilters = Boolean(logbook.showFilters);
+  const customerId = logbook.customerId || "all";
+  const period = logbook.period || "all";
+  const groupBy = logbook.groupBy || "date";
+  const sortDir = logbook.sortDir || "desc";
 
   const activeCard = active ? `
     <div class="card stack">
@@ -1026,36 +1163,29 @@ function renderLogs(){
     </div>
   ` : "";
 
-  const periodDays = logPeriod === "7d" ? 7 : logPeriod === "30d" ? 30 : logPeriod === "90d" ? 90 : null;
-  const minTimestamp = periodDays ? (now() - (periodDays * 86400000)) : null;
-
-  const filteredLogs = [...state.logs]
-    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
-    .filter(l => {
-      const status = getWorkLogStatus(l.id);
-      const isPaid = status === "paid";
-      if (logFilter === "open" && isPaid) return false;
-      if (logFilter === "paid" && !isPaid) return false;
-
-      if (logCustomerId !== "all" && l.customerId !== logCustomerId) return false;
-
-      if (minTimestamp != null){
-        const ts = l.createdAt || new Date(`${l.date}T00:00:00`).getTime();
-        if (Number.isFinite(ts) && ts < minTimestamp) return false;
-      }
-      return true;
-    });
-
-  const logs = filteredLogs.slice(0, 20);
-  const list = logs.length ? logs.map(renderLogCard).join("") : `<div class="small">Geen logs voor deze filter.</div>`;
+  const sections = applyFiltersAndSort([...state.logs]);
+  const list = sections.some(section => section.logs.length)
+    ? sections.map(section => `
+      ${section.header ? `<div class="log-group-header mono">${esc(section.header)}</div>` : ""}
+      ${section.logs.map(renderLogCard).join("")}
+    `).join("")
+    : `<div class="small">Geen logs voor deze filter.</div>`;
 
   const customerOptions = [`<option value="all">Alle klanten</option>`, ...state.customers
     .slice()
     .sort((a,b)=>(a.nickname||a.name||"").localeCompare(b.nickname||b.name||""))
-    .map(c => `<option value="${esc(c.id)}" ${logCustomerId === c.id ? "selected" : ""}>${esc(c.nickname||c.name||"Klant")}</option>`)
+    .map(c => `<option value="${esc(c.id)}" ${customerId === c.id ? "selected" : ""}>${esc(c.nickname||c.name||"Klant")}</option>`)
   ].join("");
 
-  el.innerHTML = `<div class="stack">${activeCard}<div class="card stack"><div class="log-filters"><div class="segmented" role="group" aria-label="Filter logs"><button class="seg-btn ${logFilter === "open" ? "is-active" : ""}" data-log-filter="open">Open</button><button class="seg-btn ${logFilter === "paid" ? "is-active" : ""}" data-log-filter="paid">Betaald</button><button class="seg-btn ${logFilter === "all" ? "is-active" : ""}" data-log-filter="all">Alles</button></div><button class="btn btn-filters ${showLogFilters ? "is-active" : ""}" id="btnToggleLogFilters" aria-expanded="${showLogFilters}"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round"/></svg>Filters</button></div>${showLogFilters ? `<div class="log-filter-row"><div class="log-chip"><label for="logCustomerFilter">Klant</label><select id="logCustomerFilter">${customerOptions}</select></div><div class="log-chip"><label for="logPeriodFilter">Periode</label><select id="logPeriodFilter"><option value="7d" ${logPeriod === "7d" ? "selected" : ""}>7d</option><option value="30d" ${logPeriod === "30d" ? "selected" : ""}>30d</option><option value="90d" ${logPeriod === "90d" ? "selected" : ""}>90d</option><option value="all" ${logPeriod === "all" ? "selected" : ""}>Alles</option></select></div></div>` : ""}<div class="item-title">Recente logs</div><div class="list">${list}</div></div></div>`;
+  const groupOptions = [
+    { value: "date", label: "Datum" },
+    { value: "customer", label: "Klant" },
+    { value: "workTime", label: "Werktijd" },
+    { value: "productTotal", label: "Producten €" },
+    { value: "status", label: "Status" }
+  ].map(opt => `<option value="${opt.value}" ${groupBy === opt.value ? "selected" : ""}>${opt.label}</option>`).join("");
+
+  el.innerHTML = `<div class="stack">${activeCard}<div class="card stack"><div class="log-filters"><div class="log-toolbar"><div class="category-wrap"><span class="small mono">Categorie</span><div class="category-pill"><select id="logGroupBy" aria-label="Categorie">${groupOptions}</select><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 10l5 5 5-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div><button class="icon-toggle icon-toggle-neutral" id="btnLogSortDir" aria-label="Sorteerrichting" title="Sorteerrichting">${sortDir === "desc" ? `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M8 9l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>` : `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M8 15l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>`}</button></div><button class="btn btn-filters ${showFilters ? "is-active" : ""}" id="btnToggleLogFilters" aria-expanded="${showFilters}"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round"/></svg>Filters</button></div>${showFilters ? `<div class="log-filter-row"><div class="log-chip"><label>Status</label><div class="segmented" role="group" aria-label="Status filter"><button class="seg-btn ${statusFilter === "open" ? "is-active" : ""}" data-log-status="open">Open</button><button class="seg-btn ${statusFilter === "paid" ? "is-active" : ""}" data-log-status="paid">Betaald</button><button class="seg-btn ${statusFilter === "all" ? "is-active" : ""}" data-log-status="all">Alles</button></div></div><div class="log-chip"><label for="logCustomerFilter">Klant</label><select id="logCustomerFilter">${customerOptions}</select></div><div class="log-chip"><label for="logPeriodFilter">Periode</label><select id="logPeriodFilter"><option value="all" ${period === "all" ? "selected" : ""}>Alles</option><option value="week" ${period === "week" ? "selected" : ""}>Deze week</option><option value="month" ${period === "month" ? "selected" : ""}>Deze maand</option><option value="30d" ${period === "30d" ? "selected" : ""}>Laatste 30 dagen</option></select></div><div class="log-chip log-chip-reset"><button class="btn" id="btnResetLogFilters">Reset filters</button></div></div>` : ""}<div class="list">${list}</div></div></div>`;
 
   // actions
   if (active){
@@ -1117,25 +1247,42 @@ function renderLogs(){
   el.querySelectorAll("[data-open-log]").forEach(x=>{
     x.addEventListener("click", ()=> openSheet("log", x.getAttribute("data-open-log")));
   });
-  el.querySelectorAll("[data-log-filter]").forEach(btn=>{
+  $("#btnToggleLogFilters")?.addEventListener("click", ()=>{
+    state.logbook.showFilters = !state.logbook.showFilters;
+    saveState();
+    renderLogs();
+  });
+  $("#logGroupBy")?.addEventListener("change", ()=>{
+    state.logbook.groupBy = $("#logGroupBy").value || "date";
+    saveState();
+    renderLogs();
+  });
+  $("#btnLogSortDir")?.addEventListener("click", ()=>{
+    state.logbook.sortDir = state.logbook.sortDir === "asc" ? "desc" : "asc";
+    saveState();
+    renderLogs();
+  });
+  el.querySelectorAll("[data-log-status]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
-      state.ui.logFilter = btn.getAttribute("data-log-filter") || "open";
+      state.logbook.statusFilter = btn.getAttribute("data-log-status") || "open";
       saveState();
       renderLogs();
     });
   });
-  $("#btnToggleLogFilters")?.addEventListener("click", ()=>{
-    state.ui.showLogFilters = !state.ui.showLogFilters;
-    saveState();
-    renderLogs();
-  });
   $("#logCustomerFilter")?.addEventListener("change", ()=>{
-    state.ui.logCustomerId = $("#logCustomerFilter").value || "all";
+    state.logbook.customerId = $("#logCustomerFilter").value || "all";
     saveState();
     renderLogs();
   });
   $("#logPeriodFilter")?.addEventListener("change", ()=>{
-    state.ui.logPeriod = $("#logPeriodFilter").value || "all";
+    state.logbook.period = $("#logPeriodFilter").value || "all";
+    saveState();
+    renderLogs();
+  });
+  $("#btnResetLogFilters")?.addEventListener("click", ()=>{
+    state.logbook.statusFilter = "open";
+    state.logbook.customerId = "all";
+    state.logbook.period = "all";
     saveState();
     renderLogs();
   });
