@@ -41,12 +41,31 @@ body{
 .topbar-left{ display:flex; align-items:center; gap:10px; }
 .titlewrap{ display:flex; flex-direction:column; gap:2px; }
 .apptitle{ font-weight:800; letter-spacing:.2px; }
-.subtitle{ font-size:12px; color:var(--muted); }
 
 .main{
+  position: relative;
+  overflow: hidden;
   padding: 12px var(--pad) calc(90px + env(safe-area-inset-bottom)) var(--pad);
   max-width: 920px;
   margin: 0 auto;
+  min-height: calc(100dvh - 132px - env(safe-area-inset-top));
+}
+
+.page{
+  position:absolute;
+  inset:12px var(--pad) calc(90px + env(safe-area-inset-bottom)) var(--pad);
+  overflow:auto;
+  transition: transform .28s ease, opacity .28s ease;
+  background: var(--bg);
+}
+.page.enter{ transform: translateX(100%); }
+.page.active{ transform: translateX(0); opacity:1; }
+.page.exitLeft{ transform: translateX(-20%); opacity:.6; }
+
+.detail-head{
+  display:flex;
+  justify-content:flex-end;
+  padding-bottom:10px;
 }
 
 .card{
@@ -408,41 +427,8 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   border-left:3px solid rgba(0, 160, 90, 0.82);
 }
 
-.sheet{
-  position:fixed; inset:0; z-index:50;
-  background: rgba(0,0,0,.55);
-  display:flex;
-  flex-direction:column;
-  justify-content:flex-end;
-  align-items:center;
-  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
-}
-.sheet .sheet-header,
-.sheet .sheet-body{
-  max-width: 920px;
-  width: 100%;
-}
-.sheet-header{
-  background: rgba(11,15,20,.96);
-  backdrop-filter: blur(14px);
-  border-top:1px solid var(--border);
-  border-left:1px solid var(--border);
-  border-right:1px solid var(--border);
-  border-radius: 18px 18px 0 0;
-  padding: 10px var(--pad);
-  display:flex; align-items:center; justify-content:space-between;
-  gap:10px;
-}
-.sheet-title{ font-weight:900; }
 .sheet-actions{ display:flex; gap:8px; }
 
 .sheet-body{
-  background: var(--bg);
-  border-left:1px solid var(--border);
-  border-right:1px solid var(--border);
-  border-bottom:1px solid var(--border);
-  border-radius: 0 0 18px 18px;
-  padding: 14px var(--pad) 18px var(--pad);
-  max-height: calc(100dvh - 120px);
-  overflow:auto;
+  padding: 0 0 18px 0;
 }

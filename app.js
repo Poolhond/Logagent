@@ -164,12 +164,11 @@ function ensureStateSafetyAfterMutations(st){
     s.logIds = (s.logIds||[]).filter(id => logIds.has(id));
   }
   if (st.activeLogId && !logIds.has(st.activeLogId)) st.activeLogId = null;
-  if (ui.sheet.type){
-    if (ui.sheet.type === "log" && !logIds.has(ui.sheet.id)) closeSheet();
-    if (ui.sheet.type === "customer" && !st.customers.some(c => c.id === ui.sheet.id)) closeSheet();
-    if (ui.sheet.type === "product" && !st.products.some(p => p.id === ui.sheet.id)) closeSheet();
-    if (ui.sheet.type === "settlement" && !st.settlements.some(x => x.id === ui.sheet.id)) closeSheet();
-  }
+  const active = currentView();
+  if (active.view === "logDetail" && !logIds.has(active.id)) popView();
+  if (active.view === "customerDetail" && !st.customers.some(c => c.id === active.id)) popView();
+  if (active.view === "productDetail" && !st.products.some(p => p.id === active.id)) popView();
+  if (active.view === "settlementDetail" && !st.settlements.some(x => x.id === active.id)) popView();
 }
 
 function settlementTotals(settlement){
@@ -532,12 +531,16 @@ function computeSettlementFromLogs(customerId, logIds){
 
 // ---------- UI state ----------
 const ui = {
-  tab: "logs",
-  sheet: { type: null, id: null }, // customer|log|settlement|product
+  navStack: [{ view: "logs" }],
+  transition: null
 };
 
-function setTab(key){
-  ui.tab = key;
+function currentView(){
+  return ui.navStack[ui.navStack.length - 1] || { view: "logs" };
+}
+
+function updateTabs(){
+  const key = ui.navStack[0]?.view || "logs";
   $("#tab-logs").classList.toggle("hidden", key !== "logs");
   $("#tab-settlements").classList.toggle("hidden", key !== "settlements");
   $("#tab-customers").classList.toggle("hidden", key !== "customers");
@@ -555,14 +558,58 @@ function setTab(key){
   $("#nav-customers").setAttribute("aria-selected", String(key === "customers"));
   $("#nav-products").setAttribute("aria-selected", String(key === "products"));
   $("#nav-settings").setAttribute("aria-selected", String(key === "settings"));
+}
 
-  const subtitle = key === "logs" ? "Logboek"
-    : key === "settlements" ? "Afrekenboek"
-    : key === "customers" ? "Klanten"
-    : key === "products" ? "Producten"
-    : "Instellingen";
-  $("#subTitle").textContent = subtitle;
+function viewTitle(viewState){
+  const view = viewState?.view;
+  if (view === "logs") return "Logboek";
+  if (view === "settlements") return "Afrekenboek";
+  if (view === "customers") return "Klanten";
+  if (view === "products") return "Producten";
+  if (view === "settings") return "Instellingen";
+  if (view === "logDetail"){
+    const l = state.logs.find(x => x.id === viewState.id);
+    return l ? `${cname(l.customerId)} · ${l.date}` : "Werklog";
+  }
+  if (view === "settlementDetail"){
+    const s = state.settlements.find(x => x.id === viewState.id);
+    return s ? `${cname(s.customerId)}${s.date ? ` · ${s.date}` : ""}` : "Afrekening";
+  }
+  if (view === "customerDetail"){
+    const c = state.customers.find(x => x.id === viewState.id);
+    return c ? (c.nickname || c.name || "Klant") : "Klant";
+  }
+  if (view === "productDetail"){
+    const p = state.products.find(x => x.id === viewState.id);
+    return p ? (p.name || "Product") : "Product";
+  }
+  if (view === "newLog") return "Nieuwe werklog";
+  return "Tuinlog";
+}
 
+function renderTopbar(){
+  const active = currentView();
+  $("#topbarTitle").textContent = viewTitle(active);
+  const showBack = ui.navStack.length > 1;
+  $("#btnBack").classList.toggle("hidden", !showBack);
+}
+
+function setTab(key){
+  ui.navStack = [{ view: key }];
+  ui.transition = null;
+  render();
+}
+
+function pushView(viewState){
+  ui.transition = "push";
+  ui.navStack.push(viewState);
+  render();
+}
+
+function popView(){
+  if (ui.navStack.length <= 1) return;
+  ui.transition = "pop";
+  ui.navStack.pop();
   render();
 }
 
@@ -572,12 +619,8 @@ $("#nav-customers").addEventListener("click", ()=>setTab("customers"));
 $("#nav-products").addEventListener("click", ()=>setTab("products"));
 $("#nav-settings").addEventListener("click", ()=>setTab("settings"));
 
-$("#btnBack").addEventListener("click", ()=> {
-  if (ui.sheet.type) closeSheet();
-  else setTab("logs");
-});
-$("#btnSearch").addEventListener("click", ()=> alert("Zoeken komt later."));
-$("#btnNewLog").addEventListener("click", ()=> openSheet("new-log"));
+$("#btnBack").addEventListener("click", popView);
+$("#btnNewLog").addEventListener("click", ()=> pushView({ view: "newLog" }));
 
 function startWorkLog(customerId){
   if (!customerId) return;
@@ -599,32 +642,71 @@ function startWorkLog(customerId){
   state.logs.unshift(log);
   state.activeLogId = log.id;
   saveState();
-  closeSheet();
+  popView();
 }
 
 function openSheet(type, id){
-  ui.sheet = { type, id };
-  $("#sheet").classList.remove("hidden");
-  renderSheet();
+  const map = {
+    "log": "logDetail",
+    "customer": "customerDetail",
+    "product": "productDetail",
+    "settlement": "settlementDetail",
+    "new-log": "newLog"
+  };
+  const view = map[type];
+  if (!view) return;
+  pushView(id ? { view, id } : { view });
 }
 function closeSheet(){
-  ui.sheet = { type:null, id:null };
-  $("#sheet").classList.add("hidden");
-  $("#sheetTitle").textContent = "";
-  $("#sheetActions").innerHTML = "";
-  $("#sheetBody").innerHTML = "";
-  render(); // update lists for status changes
+  popView();
 }
-$("#sheetClose").addEventListener("click", closeSheet);
 
 // ---------- Render ----------
 function render(){
-  if (ui.tab === "logs") renderLogs();
-  if (ui.tab === "settlements") renderSettlements();
-  if (ui.tab === "customers") renderCustomers();
-  if (ui.tab === "products") renderProducts();
-  if (ui.tab === "settings") renderSettings();
-  if (ui.sheet.type) renderSheet();
+  const root = ui.navStack[0]?.view || "logs";
+  updateTabs();
+  if (root === "logs") renderLogs();
+  if (root === "settlements") renderSettlements();
+  if (root === "customers") renderCustomers();
+  if (root === "products") renderProducts();
+  if (root === "settings") renderSettings();
+
+  renderTopbar();
+
+  const detailPage = $("#detailPage");
+  const rootPage = $("#rootPage");
+  if (ui.navStack.length > 1){
+    detailPage.classList.remove("hidden");
+    renderSheet();
+    if (ui.transition === "push"){
+      detailPage.className = "page enter";
+      rootPage.className = "page active";
+      requestAnimationFrame(()=>{
+        detailPage.className = "page active";
+        rootPage.className = "page exitLeft";
+      });
+    } else {
+      detailPage.className = "page active";
+      rootPage.className = "page exitLeft";
+    }
+  } else {
+    if (ui.transition === "pop" && !detailPage.classList.contains("hidden")){
+      detailPage.className = "page active";
+      rootPage.className = "page exitLeft";
+      requestAnimationFrame(()=>{
+        detailPage.className = "page enter";
+        rootPage.className = "page active";
+      });
+      setTimeout(()=>{
+        detailPage.className = "page hidden";
+        detailPage.innerHTML = '<div class="detail-head"><div id="sheetTitle" class="hidden"></div><div class="sheet-actions" id="sheetActions"></div></div><div class="sheet-body" id="sheetBody"></div>';
+      }, 280);
+    } else {
+      detailPage.className = "page hidden";
+      rootPage.className = "page active";
+    }
+  }
+  ui.transition = null;
 }
 
 function renderLogs(){
@@ -963,17 +1045,18 @@ function renderSettlements(){
 
 // ---------- Sheet rendering ----------
 function renderSheet(){
-  const { type, id } = ui.sheet;
-  if (!type) return;
-
+  const active = currentView();
   const actions = $("#sheetActions");
+  const body = $("#sheetBody");
+  if (!actions || !body) return;
   actions.innerHTML = "";
+  body.innerHTML = "";
 
-  if (type === "customer") renderCustomerSheet(id);
-  if (type === "product") renderProductSheet(id);
-  if (type === "log") renderLogSheet(id);
-  if (type === "settlement") renderSettlementSheet(id);
-  if (type === "new-log") renderNewLogSheet();
+  if (active.view === "customerDetail") renderCustomerSheet(active.id);
+  if (active.view === "productDetail") renderProductSheet(active.id);
+  if (active.view === "logDetail") renderLogSheet(active.id);
+  if (active.view === "settlementDetail") renderSettlementSheet(active.id);
+  if (active.view === "newLog") renderNewLogSheet();
 }
 
 function renderNewLogSheet(){
