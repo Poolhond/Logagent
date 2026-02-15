@@ -1325,6 +1325,22 @@ function settlementLogbookSummary(s){
   return { linkedCount: linkedLogs.length, totalWorkMs, totalProductCosts, totalLogPrice };
 }
 
+function renderIconToggle({ id, active, variant, icon, label }){
+  const classes = ["icon-toggle", `icon-toggle-${variant}`];
+  if (active) classes.push("is-active");
+  return `
+    <button
+      class="${classes.join(" ")}"
+      id="${id}"
+      type="button"
+      aria-label="${esc(label)}"
+      title="${esc(label)}"
+    >
+      ${icon}
+    </button>
+  `;
+}
+
 function renderSettlementSheet(id){
   const s = state.settlements.find(x => x.id === id);
   if (!s){ closeSheet(); return; }
@@ -1343,6 +1359,9 @@ function renderSettlementSheet(id){
   const cashT = pay.cashTotals;
   const grand = round2(pay.invoiceTotal + pay.cashTotal);
   const summary = settlementLogbookSummary(s);
+  const linkedAccentClass = pay.isPaid
+    ? "linked-log-accent-paid"
+    : (s.status === "calculated" ? "linked-log-accent-calculated" : "");
 
   $('#sheetActions').innerHTML = `
     <button class="btn danger" id="delSettlement">Verwijder</button>
@@ -1352,16 +1371,38 @@ function renderSettlementSheet(id){
 
   $('#sheetBody').innerHTML = `
     <div class="stack">
-      <div class="card stack">
-        <div class="row space">
+      <div class="card stack settlement-header-card">
+        <div class="row space settlement-header-top">
           <div>
             <div class="item-title">${esc(cname(s.customerId))}</div>
             <div class="small mono">${esc(s.date)} • #${esc((s.id||'').slice(0,8))}</div>
           </div>
-          <span class="badge mono">Totaal: ${pay.isPaid ? 'BETAALD' : 'OPEN'} • ${fmtMoney(grand)}</span>
+          <div class="rowtight settlement-header-toggles" role="group" aria-label="Afrekening status">
+            ${renderIconToggle({
+              id: "toggleCalculated",
+              active: s.status === "calculated",
+              variant: "calculated",
+              label: "Afrekening berekend",
+              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11h0M8 15h2M12 15h2M16 15h0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
+            })}
+            ${pay.hasInvoice ? renderIconToggle({
+              id: "toggleInvoicePaid",
+              active: s.invoicePaid,
+              variant: "paid",
+              label: "Factuur betaald",
+              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 3v3h3M9 11h6M9 15h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
+            }) : ""}
+            ${pay.hasCash ? renderIconToggle({
+              id: "toggleCashPaid",
+              active: s.cashPaid,
+              variant: "paid",
+              label: "Cash betaald",
+              icon: `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 12h6M12 9v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
+            }) : ""}
+          </div>
         </div>
 
-        <div class="row">
+        <div class="row settlement-meta-row">
           <div style="flex:2; min-width:220px;">
             <label>Klant</label>
             <select id="sCustomer">${customerOptions}</select>
@@ -1370,31 +1411,18 @@ function renderSettlementSheet(id){
             <label>Datum</label>
             <input id="sDate" value="${esc(s.date||todayISO())}" />
           </div>
-        </div>
-        <div class="row">
-          <button class="btn" id="markCalculated" ${s.status==='calculated'?'disabled':''}>Markeer als berekend</button>
+          <div class="badge mono">${pay.isPaid ? 'BETAALD' : 'OPEN'} • ${fmtMoney(grand)}</div>
         </div>
       </div>
 
       <div class="card stack">
         <div class="row space">
-          <div class="item-title">Logboek totaal</div>
-          <span class="badge mono">${summary.linkedCount} logs</span>
+          <div class="item-title">Gekoppelde logs</div>
         </div>
-        <div class="row">
-          <div class="badge mono">Werkduur ${durMsToHM(summary.totalWorkMs)}</div>
-          <div class="badge mono">Productkosten ${fmtMoney(summary.totalProductCosts)}</div>
-          <div class="badge mono">Logboek prijs ${fmtMoney(summary.totalLogPrice)}</div>
-        </div>
-      </div>
-
-      <div class="card stack">
-        <div class="item-title">Gekoppelde logs</div>
-        <div class="small">Tik om (de)selecteren. Koppeling bepaalt alleen totaal hierboven.</div>
         <div class="list" id="sLogs">
           ${customerLogs.slice(0,30).map(l=>{
             const checked = (s.logIds||[]).includes(l.id) ? 'checked' : '';
-            const cls = statusClassFromStatus(getWorkLogStatus(l.id));
+            const cls = linkedAccentClass;
             return `
               <label class="item item-compact ${cls}" style="cursor:pointer;">
                 <div class="item-main">
@@ -1413,31 +1441,45 @@ function renderSettlementSheet(id){
 
       <div class="card stack">
         <div class="row space">
+          <div class="item-title">Logboek totaal</div>
+          <div class="small mono">${summary.linkedCount} logs</div>
+        </div>
+        <div class="row">
+          <div class="badge mono">Werkduur ${durMsToHM(summary.totalWorkMs)}</div>
+          <div class="badge mono">Productkosten ${fmtMoney(summary.totalProductCosts)}</div>
+          <div class="badge mono">Logboek prijs ${fmtMoney(summary.totalLogPrice)}</div>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div class="row space">
           <div class="item-title">Factuur</div>
-          ${pay.hasInvoice ? `<span class="pill ${s.invoicePaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.invoiceTotal)}</span>` : ""}
+          <div class="item-title mono">${fmtMoney(pay.invoiceTotal)}</div>
         </div>
         <div class="small mono">subtotaal ${fmtMoney(invT.subtotal)} • btw 21% ${fmtMoney(invT.vat)}</div>
         <div class="list">
-          ${renderSettlementLines(s, 'invoice', false)}
+          ${renderSettlementLines(s, 'invoice', false, 'Geen factuurregels')}
         </div>
         <div class="row">
-          <button class="btn" id="addInvoiceLine">+ Regel toevoegen (Factuur)</button>
-          ${pay.hasInvoice ? `<button class="btn" id="toggleInvoicePaid">Factuur ${s.invoicePaid ? 'open zetten' : 'betaald zetten'}</button>` : `<button class="btn" disabled>Geen factuurbedrag</button>`}
+          <button class="iconbtn" id="addInvoiceLine" title="Factuurregel toevoegen" aria-label="Factuurregel toevoegen">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
         </div>
       </div>
 
       <div class="card stack">
         <div class="row space">
           <div class="item-title">Cash</div>
-          ${pay.hasCash ? `<span class="pill ${s.cashPaid?'pill-paid':'pill-open'} mono">${fmtMoney(pay.cashTotal)}</span>` : ""}
+          <div class="item-title mono">${fmtMoney(pay.cashTotal)}</div>
         </div>
-        <div class="small mono">Cash zonder btw.</div>
+        <div class="small mono">Cash zonder btw</div>
         <div class="list">
-          ${renderSettlementLines(s, 'cash', false)}
+          ${renderSettlementLines(s, 'cash', false, 'Geen cashregels')}
         </div>
         <div class="row">
-          <button class="btn" id="addCashLine">+ Regel toevoegen (Cash)</button>
-          ${pay.hasCash ? `<button class="btn" id="toggleCashPaid">Cash ${s.cashPaid ? 'open zetten' : 'betaald zetten'}</button>` : `<button class="btn" disabled>Geen cashbedrag</button>`}
+          <button class="iconbtn" id="addCashLine" title="Cashregel toevoegen" aria-label="Cashregel toevoegen">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
         </div>
       </div>
 
@@ -1451,9 +1493,10 @@ function renderSettlementSheet(id){
     saveState(); closeSheet();
   };
 
-  $('#markCalculated').onclick = ()=>{
-    if (!confirmAction('Afrekening markeren als berekend?')) return;
-    s.status = 'calculated';
+  $('#toggleCalculated').onclick = ()=>{
+    const next = s.status !== 'calculated';
+    if (!confirmAction(next ? 'Markeren als berekend?' : 'Terug naar open?')) return;
+    s.status = next ? 'calculated' : 'draft';
     saveState(); renderSheet(); render();
   };
 
@@ -1461,7 +1504,7 @@ function renderSettlementSheet(id){
   if (invoiceToggle){
     invoiceToggle.onclick = ()=>{
       const next = !s.invoicePaid;
-      if (!confirmAction(next ? 'Factuur markeren als betaald?' : 'Factuur terug open zetten?')) return;
+      if (!confirmAction(next ? 'Factuur als betaald?' : 'Factuur terug open?')) return;
       s.invoicePaid = next;
       saveState(); renderSheet(); render();
     };
@@ -1471,7 +1514,7 @@ function renderSettlementSheet(id){
   if (cashToggle){
     cashToggle.onclick = ()=>{
       const next = !s.cashPaid;
-      if (!confirmAction(next ? 'Cash markeren als betaald?' : 'Cash terug open zetten?')) return;
+      if (!confirmAction(next ? 'Cash als betaald?' : 'Cash terug open?')) return;
       s.cashPaid = next;
       saveState(); renderSheet(); render();
     };
@@ -1540,9 +1583,9 @@ function renderSettlementSheet(id){
   $('#addCashLine').onclick = ()=> showLineAdder(s, 'cash', productOptions);
 }
 
-function renderSettlementLines(s, bucket, locked){
+function renderSettlementLines(s, bucket, locked, emptyLabel = 'Geen regels.'){
   const lines = (s.lines||[]).filter(l => (l.bucket||'invoice')===bucket);
-  if (!lines.length) return `<div class="small">Geen regels.</div>`;
+  if (!lines.length) return `<div class="small">${esc(emptyLabel)}</div>`;
   return lines.map(l=>{
     const amount = lineAmount(l);
     return `
