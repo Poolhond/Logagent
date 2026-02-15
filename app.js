@@ -54,8 +54,23 @@ function defaultState(){
     ],
     logs: [],
     settlements: [],
-    activeLogId: null
+    activeLogId: null,
+    ui: {
+      logFilter: "open",
+      showLogFilters: false,
+      logCustomerId: "all",
+      logPeriod: "all"
+    }
   };
+}
+
+function ensureUIPreferences(st){
+  st.ui = st.ui || {};
+  if (!["open", "paid", "all"].includes(st.ui.logFilter)) st.ui.logFilter = "open";
+  if (!("showLogFilters" in st.ui)) st.ui.showLogFilters = false;
+  if (!("logCustomerId" in st.ui)) st.ui.logCustomerId = "all";
+  if (!("logPeriod" in st.ui)) st.ui.logPeriod = "all";
+  if (!["7d", "30d", "90d", "all"].includes(st.ui.logPeriod)) st.ui.logPeriod = "all";
 }
 
 function ensureCoreProducts(st){
@@ -91,6 +106,7 @@ function loadState(){
   if (!st.logs) st.logs = [];
   if (!st.settlements) st.settlements = [];
   if (!("activeLogId" in st)) st.activeLogId = null;
+  ensureUIPreferences(st);
 
   for (const c of st.customers){
     if (!("demo" in c)) c.demo = false;
@@ -117,6 +133,8 @@ function loadState(){
     if (!l.date) l.date = todayISO();
     if (!("demo" in l)) l.demo = false;
   }
+
+  ensureUIPreferences(st);
 
   return st;
 }
@@ -612,6 +630,10 @@ function render(){
 function renderLogs(){
   const el = $("#tab-logs");
   const active = state.activeLogId ? state.logs.find(l => l.id === state.activeLogId) : null;
+  const logFilter = state.ui.logFilter || "open";
+  const showLogFilters = !!state.ui.showLogFilters;
+  const logCustomerId = state.ui.logCustomerId || "all";
+  const logPeriod = state.ui.logPeriod || "all";
 
   const activeCard = active ? `
     <div class="card stack">
@@ -633,7 +655,27 @@ function renderLogs(){
     </div>
   ` : "";
 
-  const logs = [...state.logs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0, 20);
+  const periodDays = logPeriod === "7d" ? 7 : logPeriod === "30d" ? 30 : logPeriod === "90d" ? 90 : null;
+  const minTimestamp = periodDays ? (now() - (periodDays * 86400000)) : null;
+
+  const filteredLogs = [...state.logs]
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+    .filter(l => {
+      const status = getWorkLogStatus(l.id);
+      const isPaid = status === "paid";
+      if (logFilter === "open" && isPaid) return false;
+      if (logFilter === "paid" && !isPaid) return false;
+
+      if (logCustomerId !== "all" && l.customerId !== logCustomerId) return false;
+
+      if (minTimestamp != null){
+        const ts = l.createdAt || new Date(`${l.date}T00:00:00`).getTime();
+        if (Number.isFinite(ts) && ts < minTimestamp) return false;
+      }
+      return true;
+    });
+
+  const logs = filteredLogs.slice(0, 20);
   const list = logs.length ? logs.map(l=>{
     const st = getWorkLogStatus(l.id);
     const cls = statusClassFromStatus(st);
@@ -648,9 +690,15 @@ function renderLogs(){
         </div>
       </div>
     `;
-  }).join("") : `<div class="small">Nog geen logs.</div>`;
+  }).join("") : `<div class="small">Geen logs voor deze filter.</div>`;
 
-  el.innerHTML = `<div class="stack">${activeCard}<div class="card stack"><div class="item-title">Recente logs</div><div class="list">${list}</div></div></div>`;
+  const customerOptions = [`<option value="all">Alle klanten</option>`, ...state.customers
+    .slice()
+    .sort((a,b)=>(a.nickname||a.name||"").localeCompare(b.nickname||b.name||""))
+    .map(c => `<option value="${esc(c.id)}" ${logCustomerId === c.id ? "selected" : ""}>${esc(c.nickname||c.name||"Klant")}</option>`)
+  ].join("");
+
+  el.innerHTML = `<div class="stack">${activeCard}<div class="card stack"><div class="log-filters"><div class="segmented" role="group" aria-label="Filter logs"><button class="seg-btn ${logFilter === "open" ? "is-active" : ""}" data-log-filter="open">Open</button><button class="seg-btn ${logFilter === "paid" ? "is-active" : ""}" data-log-filter="paid">Betaald</button><button class="seg-btn ${logFilter === "all" ? "is-active" : ""}" data-log-filter="all">Alles</button></div><button class="btn btn-filters ${showLogFilters ? "is-active" : ""}" id="btnToggleLogFilters" aria-expanded="${showLogFilters}"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4" stroke-linecap="round"/></svg>Filters</button></div>${showLogFilters ? `<div class="log-filter-row"><div class="log-chip"><label for="logCustomerFilter">Klant</label><select id="logCustomerFilter">${customerOptions}</select></div><div class="log-chip"><label for="logPeriodFilter">Periode</label><select id="logPeriodFilter"><option value="7d" ${logPeriod === "7d" ? "selected" : ""}>7d</option><option value="30d" ${logPeriod === "30d" ? "selected" : ""}>30d</option><option value="90d" ${logPeriod === "90d" ? "selected" : ""}>90d</option><option value="all" ${logPeriod === "all" ? "selected" : ""}>Alles</option></select></div></div>` : ""}<div class="item-title">Recente logs</div><div class="list">${list}</div></div></div>`;
 
   // actions
   if (active){
@@ -672,6 +720,28 @@ function renderLogs(){
 
   el.querySelectorAll("[data-open-log]").forEach(x=>{
     x.addEventListener("click", ()=> openSheet("log", x.getAttribute("data-open-log")));
+  });
+  el.querySelectorAll("[data-log-filter]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      state.ui.logFilter = btn.getAttribute("data-log-filter") || "open";
+      saveState();
+      renderLogs();
+    });
+  });
+  $("#btnToggleLogFilters")?.addEventListener("click", ()=>{
+    state.ui.showLogFilters = !state.ui.showLogFilters;
+    saveState();
+    renderLogs();
+  });
+  $("#logCustomerFilter")?.addEventListener("change", ()=>{
+    state.ui.logCustomerId = $("#logCustomerFilter").value || "all";
+    saveState();
+    renderLogs();
+  });
+  $("#logPeriodFilter")?.addEventListener("change", ()=>{
+    state.ui.logPeriod = $("#logPeriodFilter").value || "all";
+    saveState();
+    renderLogs();
   });
 }
 
