@@ -32,6 +32,26 @@ function durMsToHM(ms){
   return `${h}u ${pad2(mm)}m`;
 }
 function round2(n){ return Math.round((Number(n||0))*100)/100; }
+function formatLogDatePretty(isoDate){
+  if (!isoDate) return "";
+  const [y, m, d] = String(isoDate).split("-").map(Number);
+  if (!y || !m || !d) return String(isoDate);
+  const dt = new Date(y, m - 1, d);
+  if (!Number.isFinite(dt.getTime())) return String(isoDate);
+  const dayNames = ["zo", "ma", "di", "wo", "do", "vr", "za"];
+  const monthNames = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  const yy = String(y).slice(-2);
+  return `${dayNames[dt.getDay()]} ${d} ${monthNames[m - 1]} ${yy}`;
+}
+function fmtTimeInput(ms){
+  if (!Number.isFinite(ms)) return "";
+  return fmtClock(ms);
+}
+function parseLogTimeToMs(isoDate, value){
+  if (!value) return null;
+  const parsed = new Date(`${isoDate}T${value}:00`).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function confirmDelete(label){
   return confirm(`Zeker verwijderen?\n\n${label}\n\nDit kan niet ongedaan gemaakt worden.`);
@@ -420,12 +440,19 @@ function isSettlementPaid(settlement){
     && (hasInvoice || hasCash);
 }
 function settlementColorClass(settlement){
-  if (isSettlementPaid(settlement)) return "status-paid";
-  if (settlement.status === "calculated") return "status-calculated";
-  return "status-linked";
+  return statusClassFromStatus(settlementVisualState(settlement));
 }
 function settlementForLog(logId){
   return state.settlements.find(a => (a.logIds||[]).includes(logId)) || null;
+}
+function settlementVisualState(settlement){
+  if (!settlement) return "free";
+  if (isSettlementPaid(settlement)) return "paid";
+  if (settlement.status === "calculated") return "calculated";
+  return "linked";
+}
+function logStatus(logId){
+  return settlementVisualState(settlementForLog(logId));
 }
 function isLogLinkedElsewhere(logId, currentSettlementId){
   return state.settlements.some(s =>
@@ -434,11 +461,7 @@ function isLogLinkedElsewhere(logId, currentSettlementId){
   );
 }
 function getWorkLogStatus(logId){
-  const af = settlementForLog(logId);
-  if (!af) return "free";
-  if (settlementColorClass(af) === "status-paid") return "paid";
-  if (af.status === "calculated") return "calculated";
-  return "linked";
+  return logStatus(logId);
 }
 function statusLabelNL(s){
   if (s === "draft") return "draft";
@@ -532,7 +555,8 @@ function computeSettlementFromLogs(customerId, logIds){
 // ---------- UI state ----------
 const ui = {
   navStack: [{ view: "logs" }],
-  transition: null
+  transition: null,
+  logDetailSegmentEditId: null
 };
 
 function currentView(){
@@ -1310,17 +1334,18 @@ function renderLogSheet(id){
 
   const settlementOptions = buildSettlementSelectOptions(log.customerId, af?.id);
 
-  const productOptions = state.products.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)} • ${fmtMoney(p.unitPrice)})</option>`).join("");
-  const statusLabel = !af ? "vrij" : (isSettlementPaid(af) ? "betaald" : "berekend");
-  const statusClass = !af ? "pill-neutral" : (isSettlementPaid(af) ? "pill-paid" : "pill-open");
+  const status = logStatus(log.id);
+  const statusClass = statusClassFromStatus(status);
+  const statusPillClass = status === "paid" ? "pill-paid" : status === "calculated" ? "pill-calc" : status === "linked" ? "pill-open" : "pill-neutral";
+  const statusLabel = status === "free" ? "vrij" : status === "linked" ? "gekoppeld" : status === "calculated" ? "berekend" : "betaald";
 
   $("#sheetBody").innerHTML = `
     <div class="stack log-detail-compact">
-      <section class="compact-section log-detail-header">
+      <section class="compact-section log-detail-header ${statusClass}">
         <div class="log-h1">${esc(cname(log.customerId))}</div>
-        <div class="small mono">${esc(log.date)} • Werk ${durMsToHM(sumWorkMs(log))} • Pauze ${durMsToHM(sumBreakMs(log))}</div>
+        <div class="small mono">${esc(formatLogDatePretty(log.date))}</div>
         <div class="row">
-          <span class="pill ${statusClass}">${statusLabel}</span>
+          <span class="pill ${statusPillClass}">${statusLabel}</span>
         </div>
       </section>
 
@@ -1332,13 +1357,36 @@ function renderLogSheet(id){
       </section>
 
       <section class="compact-section stack">
-        <div class="item-title">Segments</div>
+        <div class="row space">
+          <div class="item-title">Segments</div>
+          <button class="btn" id="addSegment" type="button">+ segment</button>
+        </div>
         <div class="compact-lines">
-          ${(log.segments||[]).map(s=>`
-            <div class="compact-line mono">
-              ${s.type === "break" ? "Pauze" : "Werk"} ${fmtClock(s.start)}–${s.end ? fmtClock(s.end) : "…"}
-            </div>
-          `).join("") || `<div class="small">Geen segments.</div>`}
+          ${(log.segments||[]).map(s=>{
+            const isOpen = ui.logDetailSegmentEditId === s.id;
+            return `
+              <div class="segment-row ${isOpen ? "is-open" : ""}">
+                <button class="segment-row-btn mono" type="button" data-toggle-segment="${s.id}">
+                  ${s.type === "break" ? "Pauze" : "Werk"} ${s.start ? fmtClock(s.start) : "…"}–${s.end ? fmtClock(s.end) : "…"}
+                </button>
+                ${isOpen ? `
+                  <div class="segment-editor" data-segment-editor="${s.id}">
+                    <div class="segment-grid">
+                      <label>Start<input type="time" value="${esc(fmtTimeInput(s.start))}" data-edit-segment="${s.id}" data-field="start" /></label>
+                      <label>Einde<input type="time" value="${esc(fmtTimeInput(s.end))}" data-edit-segment="${s.id}" data-field="end" /></label>
+                      <label>Type
+                        <select data-edit-segment="${s.id}" data-field="type">
+                          <option value="work" ${s.type === "work" ? "selected" : ""}>work</option>
+                          <option value="break" ${s.type === "break" ? "selected" : ""}>break</option>
+                        </select>
+                      </label>
+                    </div>
+                    <button class="btn danger" type="button" data-del-segment="${s.id}">Verwijder segment</button>
+                  </div>
+                ` : ""}
+              </div>
+            `;
+          }).join("") || `<div class="small">Geen segments.</div>`}
         </div>
       </section>
 
@@ -1348,7 +1396,7 @@ function renderLogSheet(id){
           <span class="small mono">Totaal ${fmtMoney(sumItemsAmount(log))}</span>
         </div>
         <div class="log-lines-wrap">
-          ${renderLogItems(log, productOptions)}
+          ${renderLogItems(log)}
         </div>
       </section>
 
@@ -1366,28 +1414,75 @@ function renderLogSheet(id){
     render();
   });
 
-  $("#sheetBody").querySelectorAll("[data-add-prod]").forEach(sel => sel.onchange = ()=>{
-    const pid = $("#addProd").value;
-    const p = getProduct(pid);
-    $("#addPrice").value = String(p?.unitPrice ?? 0);
+  $("#addSegment").addEventListener("click", ()=>{
+    log.segments = log.segments || [];
+    const seg = { id: uid(), type: "work", start: null, end: null };
+    log.segments.push(seg);
+    ui.logDetailSegmentEditId = seg.id;
+    saveState();
+    renderSheet();
   });
 
-  $("#addItem").onclick = ()=>{
-    const pid = $("#addProd").value;
-    const qty = Number(String($("#addQty").value).replace(",", ".") || "0");
-    const price = Number(String($("#addPrice").value).replace(",", ".") || "0");
-    if (!pid || !(qty>0)) return;
-    log.items = log.items || [];
-    log.items.push({ id: uid(), productId: pid, qty, unitPrice: price, note:"" });
-    saveState(); renderSheet();
-  };
+  $("#sheetBody").querySelectorAll("[data-toggle-segment]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const segmentId = btn.getAttribute("data-toggle-segment");
+      ui.logDetailSegmentEditId = ui.logDetailSegmentEditId === segmentId ? null : segmentId;
+      renderSheet();
+    });
+  });
+
+  $("#sheetBody").querySelectorAll("[data-edit-segment]").forEach(inp=>{
+    inp.addEventListener("change", ()=>{
+      const segmentId = inp.getAttribute("data-edit-segment");
+      const field = inp.getAttribute("data-field");
+      const seg = (log.segments||[]).find(x => x.id === segmentId);
+      if (!seg) return;
+
+      if (field === "type"){
+        if (!["work", "break"].includes(inp.value)){
+          alert('Type moet "work" of "break" zijn.');
+          renderSheet();
+          return;
+        }
+        seg.type = inp.value;
+      }
+
+      if (field === "start" || field === "end"){
+        const nextStart = field === "start" ? parseLogTimeToMs(log.date, inp.value) : seg.start;
+        const nextEnd = field === "end" ? parseLogTimeToMs(log.date, inp.value) : seg.end;
+        if (nextStart == null || nextEnd == null || !(nextEnd > nextStart)){
+          alert("Segment ongeldig: einde moet later zijn dan start.");
+          renderSheet();
+          return;
+        }
+        seg.start = nextStart;
+        seg.end = nextEnd;
+      }
+
+      saveState();
+      renderSheet();
+      render();
+    });
+  });
+
+  $("#sheetBody").querySelectorAll("[data-del-segment]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const segmentId = btn.getAttribute("data-del-segment");
+      if (!confirmDelete("Segment verwijderen")) return;
+      log.segments = (log.segments||[]).filter(s => s.id !== segmentId);
+      if (ui.logDetailSegmentEditId === segmentId) ui.logDetailSegmentEditId = null;
+      saveState();
+      renderSheet();
+      render();
+    });
+  });
 
   $("#sheetBody").querySelectorAll("[data-del-log-item]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const itemId = btn.getAttribute("data-del-log-item");
       if (!confirmDelete("Item verwijderen")) return;
       log.items = (log.items||[]).filter(it => it.id !== itemId);
-      saveState(); renderSheet();
+      saveState(); renderSheet(); render();
     });
   });
 
@@ -1397,11 +1492,25 @@ function renderLogSheet(id){
       const field = inp.getAttribute("data-field");
       const it = (log.items||[]).find(x => x.id === itemId);
       if (!it) return;
-      if (field === "qty") it.qty = Number(String(inp.value).replace(",", ".") || "0");
-      if (field === "unitPrice") it.unitPrice = Number(String(inp.value).replace(",", ".") || "0");
-      if (field === "productId") it.productId = inp.value;
-      saveState(); renderSheet();
+      if (field === "qty") it.qty = inp.value === "" ? null : Number(String(inp.value).replace(",", ".") || "0");
+      if (field === "unitPrice") it.unitPrice = inp.value === "" ? null : Number(String(inp.value).replace(",", ".") || "0");
+      if (field === "productId"){
+        it.productId = inp.value;
+        const p = getProduct(inp.value);
+        if (p && (it.unitPrice == null || it.unitPrice === 0)) it.unitPrice = Number(p.unitPrice||0);
+      }
+      saveState(); renderSheet(); render();
     });
+  });
+
+  $("#addProductItem").addEventListener("click", ()=>{
+    const workProduct = state.products.find(p => (p.name||"").trim().toLowerCase() === "werk") || state.products[0] || null;
+    if (!workProduct) return;
+    log.items = log.items || [];
+    log.items.push({ id: uid(), productId: workProduct.id, qty: null, unitPrice: Number(workProduct.unitPrice||0), note:"" });
+    saveState();
+    renderSheet();
+    render();
   });
 
   $("#logSettlement").onchange = ()=>{
@@ -1459,34 +1568,44 @@ function renderLogSheet(id){
   };
 }
 
-function renderLogItems(log, productOptions){
+function renderLogItems(log){
+  const productOptions = state.products
+    .map(p => `<option value="${p.id}">${esc(p.name)}${p.unit ? ` (${esc(p.unit)})` : ""}</option>`)
+    .join("");
+
   const rows = (log.items||[]).map(it=>{
+    const productId = it.productId || state.products[0]?.id || "";
+    const qtyValue = it.qty == null ? "" : String(it.qty);
+    const unitPriceValue = it.unitPrice == null ? "" : String(it.unitPrice);
     return `
-      <div class="log-lines-grid log-lines-row">
-        <select class="settlement-cell-input" data-edit-log-item="${it.id}" data-field="productId">${productOptions.replace(`value="${it.productId}"`, `value="${it.productId}" selected`)}</select>
-        <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="qty" inputmode="decimal" value="${esc(String(it.qty ?? 0))}" />
-        <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="unitPrice" inputmode="decimal" value="${esc(String(it.unitPrice ?? 0))}" />
-        <div class="num mono">${fmtMoney((Number(it.qty)||0)*(Number(it.unitPrice)||0))}</div>
-        <button class="iconbtn settlement-trash" data-del-log-item="${it.id}" title="Verwijder">
+      <div class="log-item-row">
+        <div class="log-item-row-top">
+          <select class="settlement-cell-input" data-edit-log-item="${it.id}" data-field="productId">
+            ${productOptions.replace(`value="${productId}"`, `value="${productId}" selected`)}
+          </select>
+          <button class="iconbtn settlement-trash" data-del-log-item="${it.id}" title="Verwijder">
             <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4h8v2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6l1 16h10l1-16" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+          </button>
+        </div>
+        <div class="log-item-row-bottom">
+          <div class="log-item-cell">
+            <label>qty</label>
+            <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="qty" inputmode="decimal" value="${esc(qtyValue)}" />
+          </div>
+          <div class="log-item-cell">
+            <label>€/eenheid</label>
+            <input class="settlement-cell-input num" data-edit-log-item="${it.id}" data-field="unitPrice" inputmode="decimal" value="${esc(unitPriceValue)}" />
+          </div>
+          <div class="log-item-total num mono">${fmtMoney((Number(it.qty)||0)*(Number(it.unitPrice)||0))}</div>
+        </div>
       </div>
     `;
   }).join("");
 
   return `
-    <div class="log-lines-table">
-      <div class="log-lines-grid log-lines-head">
-        <div>Product</div><div class="num">qty</div><div class="num">prijs</div><div class="num">totaal</div><div></div>
-      </div>
+    <div class="log-items-list">
       ${rows || `<div class="small">Nog geen producten.</div>`}
-      <div class="log-lines-grid log-lines-row log-lines-add">
-        <select id="addProd" data-add-prod class="settlement-cell-input">${productOptions}</select>
-        <input id="addQty" class="settlement-cell-input num" inputmode="decimal" value="1" />
-        <input id="addPrice" class="settlement-cell-input num" inputmode="decimal" value="${esc(String(state.products[0]?.unitPrice ?? 0))}" />
-        <div></div>
-        <button class="btn settlement-trash" id="addItem" title="Toevoegen">+</button>
-      </div>
+      <button class="btn" id="addProductItem" type="button">+ Product</button>
     </div>
   `;
 }

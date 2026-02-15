@@ -374,49 +374,90 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
 .compact-lines{
   display:flex;
   flex-direction:column;
-  gap:4px;
+  gap:6px;
 }
 
-.compact-line{
-  font-size:13px;
+.segment-row{
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:rgba(255,255,255,.01);
+}
+
+.segment-row-btn{
+  width:100%;
+  text-align:left;
+  border:0;
+  background:transparent;
   color:var(--text);
-  padding:4px 0;
+  font-size:13px;
+  padding:8px 10px;
+}
+
+.segment-editor{
+  border-top:1px solid var(--border);
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.segment-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+}
+
+.segment-grid label{
+  margin:0;
+  font-size:12px;
+  color:var(--muted);
 }
 
 .log-lines-wrap{
-  overflow-x:auto;
+  overflow-x:visible;
 }
 
-.log-lines-table{
-  min-width:420px;
+.log-items-list{
   display:flex;
   flex-direction:column;
-  gap:4px;
+  gap:8px;
 }
 
-.log-lines-grid{
+.log-item-row{
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:rgba(255,255,255,.015);
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.log-item-row-top{
   display:grid;
-  grid-template-columns: minmax(160px, 1fr) 70px 80px 90px 40px;
+  grid-template-columns:minmax(0,1fr) 34px;
   gap:6px;
   align-items:center;
 }
 
-.log-lines-head{
-  font-size:12px;
+.log-item-row-bottom{
+  display:grid;
+  grid-template-columns:78px 108px minmax(0,1fr);
+  gap:8px;
+  align-items:end;
+}
+
+.log-item-cell label{
+  margin:0 0 4px;
+  display:block;
+  font-size:11px;
   color:var(--muted);
-  padding:0 2px;
 }
 
-.log-lines-row{
-  padding:2px;
-  border:1px solid var(--border);
-  border-radius:8px;
-  background:rgba(255,255,255,.01);
-}
-
-.log-lines-add .btn{
-  min-height:32px;
-  padding:4px;
+.log-item-total{
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+  padding-bottom:8px;
 }
 
 .log-detail-compact input,
@@ -425,6 +466,11 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   padding:6px 8px;
   border-radius:8px;
   font-size:13px;
+}
+
+@media (max-width:420px){
+  .segment-grid{ grid-template-columns:1fr; }
+  .log-item-row-bottom{ grid-template-columns:72px 96px minmax(0,1fr); gap:6px; }
 }
 .settlement-lines-table{
   min-width:420px;
@@ -509,6 +555,10 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
 .pill-open{
   background: rgba(255, 188, 56, 0.09);
   border-color: rgba(255, 188, 56, 0.3);
+}
+.pill-calc{
+  background: rgba(255, 140, 0, 0.12);
+  border-color: rgba(255, 140, 0, 0.34);
 }
 .pill-paid{
   background: rgba(0, 160, 90, 0.1);
