@@ -342,6 +342,90 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   overflow-x:auto;
 }
 
+
+.log-detail-compact .compact-section{
+  border-bottom:1px solid var(--border);
+  padding:8px 0;
+}
+
+.log-detail-compact .compact-section:last-child{
+  border-bottom:0;
+}
+
+.log-h1{
+  font-size:24px;
+  font-weight:800;
+  line-height:1.2;
+}
+
+.compact-row{
+  display:grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap:8px;
+  align-items:center;
+}
+
+.compact-row label{
+  margin:0;
+  color:var(--text);
+  font-size:13px;
+}
+
+.compact-lines{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.compact-line{
+  font-size:13px;
+  color:var(--text);
+  padding:4px 0;
+}
+
+.log-lines-wrap{
+  overflow-x:auto;
+}
+
+.log-lines-table{
+  min-width:420px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.log-lines-grid{
+  display:grid;
+  grid-template-columns: minmax(160px, 1fr) 70px 80px 90px 40px;
+  gap:6px;
+  align-items:center;
+}
+
+.log-lines-head{
+  font-size:12px;
+  color:var(--muted);
+  padding:0 2px;
+}
+
+.log-lines-row{
+  padding:2px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:rgba(255,255,255,.01);
+}
+
+.log-lines-add .btn{
+  min-height:32px;
+  padding:4px;
+}
+
+.log-detail-compact input,
+.log-detail-compact select{
+  min-height:32px;
+  padding:6px 8px;
+  border-radius:8px;
+  font-size:13px;
+}
 .settlement-lines-table{
   min-width:420px;
   display:flex;
