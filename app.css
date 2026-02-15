@@ -265,7 +265,7 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
 
 .list{ display:flex; flex-direction:column; }
 .item{
-  padding: 12px;
+  padding: 9px 10px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: rgba(255,255,255,.02);
@@ -274,17 +274,18 @@ label{ display:block; font-size:12px; color:var(--muted); margin: 0 0 6px 0; }
   align-items:flex-start;
   justify-content:space-between;
 }
-.item + .item{ margin-top:10px; }
+.item + .item{ margin-top:7px; }
 
 .item-main{ flex:1; min-width: 0; }
-.item-title{ font-weight:800; }
-.item-sub{ margin-top:4px; font-size:12px; color:var(--muted); }
+.item-title{ font-weight:800; line-height:1.25; }
+.item-sub{ margin-top:2px; font-size:12px; color:var(--muted); }
 .log-meta-row{
   display:flex;
   flex-wrap:wrap;
-  gap:8px;
+  gap:5px;
   color:var(--muted);
-  font-size:13px;
+  font-size:12px;
+  line-height:1.2;
   align-items:center;
   font-variant-numeric: tabular-nums;
 }
